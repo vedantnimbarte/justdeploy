@@ -514,6 +514,21 @@ pub async fn rerelease(
     if service.desired_state != "running" {
         return Ok(None);
     }
+    // A deploy already on its way reads settings, env and domains when it
+    // releases, so it carries this change too. Queuing another release of the
+    // current image here would undo it.
+    let in_flight = sqlx::query_as!(
+        Deployment,
+        "SELECT * FROM deployments
+         WHERE service_id = $1 AND kind = 'production' AND status IN ('queued', 'building', 'deploying')
+         ORDER BY created_at DESC LIMIT 1",
+        service.id
+    )
+    .fetch_optional(&state.db)
+    .await?;
+    if in_flight.is_some() {
+        return Ok(in_flight);
+    }
     let current = match service.current_deployment_id {
         Some(id) => get_deployment(&state.db, id).await.ok(),
         None => None,

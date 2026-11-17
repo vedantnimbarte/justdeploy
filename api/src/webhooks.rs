@@ -174,7 +174,7 @@ pub async fn on_pull_request(
 }
 
 pub fn forbidden() -> Error {
-    Error::BadRequest("signature does not match the service's webhook secret".into())
+    Error::Forbidden("signature does not match the service's webhook secret".into())
 }
 
 #[cfg(test)]

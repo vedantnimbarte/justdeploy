@@ -166,7 +166,11 @@ async fn pipeline(
     .execute(&state.db)
     .await?;
 
-    release(state, service, &project, deployment, &image, log).await
+    // Settings may have changed during a long build; release with the latest.
+    let service = services::get_service(&state.db, service.id)
+        .await
+        .map_err(|e| anyhow!("{e}"))?;
+    release(state, &service, &project, deployment, &image, log).await
 }
 
 async fn pull(state: &SharedState, image: &str, log: &DeployLog) -> anyhow::Result<()> {

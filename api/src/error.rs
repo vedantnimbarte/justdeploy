@@ -19,6 +19,8 @@ pub enum Error {
     Conflict(String),
     #[error("too many attempts, try again later")]
     RateLimited,
+    #[error("{0}")]
+    Forbidden(String),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -53,6 +55,7 @@ impl IntoResponse for Error {
             Error::Unauthorized => StatusCode::UNAUTHORIZED,
             Error::Conflict(_) => StatusCode::CONFLICT,
             Error::RateLimited => StatusCode::TOO_MANY_REQUESTS,
+            Error::Forbidden(_) => StatusCode::FORBIDDEN,
             Error::Internal(error) => {
                 tracing::error!(error = format!("{error:#}"), "request failed");
                 return (
