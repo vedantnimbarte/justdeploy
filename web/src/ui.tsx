@@ -1,5 +1,5 @@
-// Building blocks. Bands are full-bleed and square; cards are 8px; buttons are 4px
-// charcoal; depth comes from the neutral ladder and hairlines, never shadows.
+// Building blocks. Greys carry structure, actions are solid ink, colour means
+// state. Controls are 6px, panels 10px; only menus and dialogs float.
 
 import {
   createContext,
@@ -16,39 +16,16 @@ import {
 import { Link } from "react-router";
 import type { Status } from "./api";
 
-const cx = (...parts: (string | false | null | undefined)[]) => parts.filter(Boolean).join(" ");
+export const cx = (...parts: (string | false | null | undefined)[]) => parts.filter(Boolean).join(" ");
 
 // ---------------------------------------------------------------- layout
 
-type Tone = "white" | "soft" | "tint" | "warm" | "teal" | "deep";
-
-const TONES: Record<Tone, string> = {
-  white: "bg-canvas",
-  soft: "bg-canvas-soft",
-  tint: "bg-canvas-tint",
-  warm: "bg-canvas-warm",
-  teal: "bg-teal",
-  deep: "bg-ink-deep text-white",
-};
-
-/** A full-width section on one rung of the ladder, content in the 1600px column. */
-export function Band({
-  tone = "warm",
-  className,
-  children,
-}: {
-  tone?: Tone;
-  className?: string;
-  children: ReactNode;
-}) {
-  return (
-    <section className={cx(TONES[tone], "px-4 py-8 md:px-10 md:py-12 xl:px-[72px]")}>
-      <div className={cx("mx-auto max-w-[1600px]", className)}>{children}</div>
-    </section>
-  );
+/** A block of page content. `tone` is accepted for older call sites and ignored. */
+export function Band({ className, children }: { tone?: string; className?: string; children: ReactNode }) {
+  return <section className={cx("px-5 pb-10 md:px-10", className)}>{children}</section>;
 }
 
-/** The opening band of a page: serif headline, the gold rule, a standfirst. */
+/** The title row at the top of a page: wide title, one line of context, actions. */
 export function PageHeader({
   title,
   eyebrow,
@@ -63,49 +40,50 @@ export function PageHeader({
   children?: ReactNode;
 }) {
   return (
-    <Band tone="warm">
-      <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+    <header className="px-5 pt-8 pb-8 md:px-10 md:pt-10">
+      {eyebrow && <nav className="mb-3 text-sm text-muted">{eyebrow}</nav>}
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0">
-          {eyebrow && <div className="mb-3 text-sm">{eyebrow}</div>}
-          <h1 className="font-serif text-[32px] font-normal break-words md:text-[40px]">{title}</h1>
-          <div className="mt-[18px] h-1 w-10 bg-gold" aria-hidden />
-          {lead && <div className="mt-5 max-w-3xl text-lg leading-[1.4]">{lead}</div>}
-          {children}
+          <h1 className="title-wide text-[28px] break-words md:text-[34px]">{title}</h1>
+          {lead && <p className="mt-2 max-w-[68ch] text-muted">{lead}</p>}
         </div>
-        {actions && <div className="flex flex-wrap gap-3">{actions}</div>}
+        {actions && <div className="flex shrink-0 flex-wrap gap-2">{actions}</div>}
       </div>
-    </Band>
+      {children}
+    </header>
   );
 }
 
 export function SectionTitle({ children, action }: { children: ReactNode; action?: ReactNode }) {
   return (
-    <div className="mb-[18px] flex items-center justify-between gap-4">
-      <h2 className="text-xl font-extrabold md:text-2xl">{children}</h2>
+    <div className="mb-4 flex items-center justify-between gap-4">
+      <h2 className="text-lg font-semibold">{children}</h2>
       {action}
     </div>
   );
 }
 
-export function Card({
-  className,
-  children,
-  tone = "white",
-}: {
-  className?: string;
-  children: ReactNode;
-  tone?: "white" | "warm" | "soft";
-}) {
-  const bg = tone === "white" ? "bg-canvas" : tone === "warm" ? "bg-canvas-warm" : "bg-canvas-soft";
-  return <div className={cx(bg, "rounded-md border border-hairline p-6", className)}>{children}</div>;
+/** A surface on the page. `tone` "soft" sits one step down for nested blocks. */
+export function Card({ className, children, tone = "white" }: { className?: string; children: ReactNode; tone?: string }) {
+  return (
+    <div
+      className={cx(
+        "rounded-panel border border-line p-5 md:p-6",
+        tone === "white" ? "bg-surface" : "bg-subtle",
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
 }
 
 export function EmptyState({ title, children, action }: { title: string; children?: ReactNode; action?: ReactNode }) {
   return (
-    <div className="rounded-md bg-canvas-soft p-8 text-center md:p-12">
-      <h3 className="text-lg font-extrabold">{title}</h3>
-      {children && <div className="mx-auto mt-2 max-w-xl">{children}</div>}
-      {action && <div className="mt-6 flex justify-center gap-3">{action}</div>}
+    <div className="rounded-panel border border-dashed border-line-strong px-6 py-12 text-center">
+      <h3 className="font-semibold">{title}</h3>
+      {children && <div className="mx-auto mt-2 max-w-[56ch] text-muted">{children}</div>}
+      {action && <div className="mt-6 flex flex-wrap justify-center gap-2">{action}</div>}
     </div>
   );
 }
@@ -115,12 +93,15 @@ export function EmptyState({ title, children, action }: { title: string; childre
 type Variant = "primary" | "secondary" | "tertiary" | "inverse" | "danger";
 
 const VARIANTS: Record<Variant, string> = {
-  primary: "bg-primary text-white hover:bg-primary-pressed active:bg-primary-pressed",
-  secondary: "border border-ink text-ink hover:bg-ink/5",
-  tertiary: "bg-ink/8 text-ink hover:bg-ink/12",
-  inverse: "bg-canvas text-ink hover:bg-canvas-tint",
-  danger: "border border-error text-error hover:bg-error/5",
+  primary: "bg-fg text-on-fg hover:opacity-90",
+  secondary: "border border-line-strong bg-surface text-fg hover:bg-subtle",
+  tertiary: "text-fg hover:bg-subtle",
+  inverse: "bg-surface text-fg hover:bg-subtle",
+  danger: "border border-err/40 bg-surface text-err hover:bg-err/8",
 };
+
+const buttonBase =
+  "inline-flex h-9 items-center justify-center gap-2 rounded-control px-3.5 text-sm font-medium whitespace-nowrap no-underline transition-[background-color,opacity] duration-100";
 
 export function Button({
   variant = "primary",
@@ -135,63 +116,47 @@ export function Button({
       {...rest}
       disabled={rest.disabled || busy}
       className={cx(
-        "inline-flex items-center justify-center gap-2 rounded-xs px-4 py-[13px] text-sm leading-[1.2] font-medium whitespace-nowrap",
-        "disabled:cursor-not-allowed disabled:border disabled:border-hairline disabled:bg-canvas-soft disabled:text-disabled",
+        buttonBase,
         VARIANTS[variant],
+        "disabled:cursor-not-allowed disabled:opacity-45",
         className,
       )}
     >
-      {busy ? "Working…" : children}
+      {busy && <span className="size-3 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden />}
+      {children}
     </button>
   );
 }
 
 export function ButtonLink({ to, variant = "primary", children }: { to: string; variant?: Variant; children: ReactNode }) {
   return (
-    <Link
-      to={to}
-      className={cx(
-        "inline-flex items-center justify-center rounded-xs px-4 py-[13px] text-sm leading-[1.2] font-medium whitespace-nowrap",
-        VARIANTS[variant],
-        variant === "primary" ? "!text-white" : "!text-ink",
-      )}
-    >
+    <Link to={to} className={cx(buttonBase, VARIANTS[variant])}>
       {children}
     </Link>
   );
 }
 
 const fieldClass =
-  "w-full rounded-sm border border-field bg-canvas px-[18px] py-3 text-base text-ink placeholder:text-disabled disabled:bg-canvas-soft disabled:text-disabled";
+  "w-full rounded-control border border-line-strong bg-surface px-3 py-2 text-[15px] text-fg placeholder:text-faint focus:border-focus focus:outline-none focus:ring-2 focus:ring-focus/25 disabled:bg-subtle disabled:text-faint";
 
 export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...props} className={cx(fieldClass, props.className)} />;
+  return <input {...props} className={cx(fieldClass, "h-9", props.className)} />;
 }
 
 export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select {...props} className={cx(fieldClass, "pr-10", props.className)} />;
+  return <select {...props} className={cx(fieldClass, "h-9 pr-8", props.className)} />;
 }
 
 export function Textarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea {...props} className={cx(fieldClass, "font-mono text-sm", props.className)} />;
+  return <textarea {...props} className={cx(fieldClass, "font-mono text-[13px] leading-6", props.className)} />;
 }
 
-export function Field({
-  label,
-  hint,
-  children,
-  className,
-}: {
-  label: string;
-  hint?: ReactNode;
-  children: ReactNode;
-  className?: string;
-}) {
+export function Field({ label, hint, children, className }: { label: string; hint?: ReactNode; children: ReactNode; className?: string }) {
   return (
     <label className={cx("block", className)}>
-      <span className="mb-2 block text-sm font-semibold">{label}</span>
+      <span className="mb-1.5 block text-sm font-medium">{label}</span>
       {children}
-      {hint && <span className="mt-1.5 block text-sm text-ink/70">{hint}</span>}
+      {hint && <span className="mt-1.5 block text-[13px] text-muted">{hint}</span>}
     </label>
   );
 }
@@ -213,14 +178,14 @@ export function Checkbox({
     <label className="flex cursor-pointer items-start gap-3">
       <input
         type="checkbox"
-        className="mt-1 size-4 accent-primary"
+        className="mt-1 size-4 accent-[var(--jd-fg)]"
         checked={checked}
         disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
       />
       <span>
-        <span className="block font-semibold">{label}</span>
-        {hint && <span className="block text-sm text-ink/70">{hint}</span>}
+        <span className="block font-medium">{label}</span>
+        {hint && <span className="block text-[13px] text-muted">{hint}</span>}
       </span>
     </label>
   );
@@ -229,7 +194,7 @@ export function Checkbox({
 export function ErrorText({ error }: { error: unknown }) {
   if (!error) return null;
   return (
-    <p role="alert" className="text-sm text-error">
+    <p role="alert" className="text-sm text-err">
       {error instanceof Error ? error.message : String(error)}
     </p>
   );
@@ -237,34 +202,43 @@ export function ErrorText({ error }: { error: unknown }) {
 
 // ---------------------------------------------------------------- status
 
-const STATUS: Record<string, { dot: string; label: string }> = {
-  running: { dot: "bg-forest", label: "Running" },
-  deploying: { dot: "bg-gold animate-pulse", label: "Deploying" },
-  building: { dot: "bg-gold animate-pulse", label: "Building" },
-  queued: { dot: "bg-gold", label: "Queued" },
-  crashed: { dot: "bg-error", label: "Crashed" },
-  failed: { dot: "bg-error", label: "Failed" },
-  stopped: { dot: "bg-disabled", label: "Stopped" },
-  idle: { dot: "bg-disabled", label: "Not deployed" },
-  deleting: { dot: "bg-disabled animate-pulse", label: "Deleting" },
-  superseded: { dot: "bg-hairline border border-disabled", label: "Superseded" },
-  removed: { dot: "bg-hairline border border-disabled", label: "Removed" },
-  succeeded: { dot: "bg-forest", label: "Succeeded" },
+const STATUS: Record<string, { dot: string; label: string; pulse?: boolean }> = {
+  running: { dot: "bg-ok", label: "Running" },
+  deploying: { dot: "bg-warn", label: "Deploying", pulse: true },
+  building: { dot: "bg-warn", label: "Building", pulse: true },
+  queued: { dot: "bg-warn", label: "Queued" },
+  crashed: { dot: "bg-err", label: "Crashed" },
+  failed: { dot: "bg-err", label: "Failed" },
+  stopped: { dot: "bg-off", label: "Stopped" },
+  idle: { dot: "bg-off", label: "Not deployed" },
+  deleting: { dot: "bg-off", label: "Deleting", pulse: true },
+  superseded: { dot: "bg-line-strong", label: "Replaced" },
+  removed: { dot: "bg-line-strong", label: "Removed" },
+  succeeded: { dot: "bg-ok", label: "Succeeded" },
 };
 
+export function statusDot(status: string): { dot: string; pulse?: boolean } {
+  return STATUS[status] ?? { dot: "bg-off" };
+}
+
+export function Dot({ status, className }: { status: Status | string; className?: string }) {
+  const s = statusDot(status);
+  return <span className={cx("inline-block size-2 shrink-0 rounded-full", s.dot, s.pulse && "pulse", className)} aria-hidden />;
+}
+
+/** A dot always travels with a word, so state never rests on colour alone. */
 export function StatusDot({ status, className }: { status: Status | string; className?: string }) {
-  const s = STATUS[status] ?? { dot: "bg-disabled", label: status };
   return (
     <span className={cx("inline-flex items-center gap-2 text-sm", className)}>
-      <span className={cx("size-2 shrink-0 rounded-full", s.dot)} aria-hidden />
-      {s.label}
+      <Dot status={status} />
+      {STATUS[status]?.label ?? status}
     </span>
   );
 }
 
 export function Badge({ children }: { children: ReactNode }) {
   return (
-    <span className="inline-flex items-center rounded-xs border border-hairline bg-canvas-soft px-2 py-0.5 text-xs font-medium">
+    <span className="inline-flex items-center rounded-control bg-subtle px-2 py-0.5 text-xs font-medium text-muted">
       {children}
     </span>
   );
@@ -276,8 +250,7 @@ export function CopyButton({ value, label = "Copy" }: { value: string; label?: s
   const [copied, setCopied] = useState(false);
   return (
     <Button
-      variant="tertiary"
-      className="!py-2"
+      variant="secondary"
       onClick={async () => {
         await navigator.clipboard.writeText(value);
         setCopied(true);
@@ -293,11 +266,11 @@ export function CodeLine({ value, secret }: { value: string; secret?: boolean })
   const [shown, setShown] = useState(!secret);
   return (
     <div className="flex min-w-0 items-center gap-2">
-      <code className="min-w-0 flex-1 truncate rounded-sm border border-hairline bg-canvas-soft px-3 py-2 text-sm">
+      <code className="flex h-9 min-w-0 flex-1 items-center truncate rounded-control border border-line bg-subtle px-3 text-[13px]">
         {shown ? value : "•".repeat(Math.min(value.length, 32))}
       </code>
       {secret && (
-        <Button variant="tertiary" className="!py-2" onClick={() => setShown(!shown)}>
+        <Button variant="secondary" onClick={() => setShown(!shown)}>
           {shown ? "Hide" : "Show"}
         </Button>
       )}
@@ -306,7 +279,7 @@ export function CodeLine({ value, secret }: { value: string; secret?: boolean })
   );
 }
 
-/** Light sub-navigation: an ink underline marks the active item. */
+/** Underlined tabs on the page background. */
 export function Tabs<T extends string>({
   tabs,
   active,
@@ -317,8 +290,8 @@ export function Tabs<T extends string>({
   onChange: (id: T) => void;
 }) {
   return (
-    <nav className="no-scrollbar overflow-x-auto border-b border-hairline bg-canvas px-4 md:px-10 xl:px-[72px]">
-      <div className="mx-auto flex h-16 max-w-[1600px] gap-6" role="tablist">
+    <nav className="no-scrollbar mb-8 overflow-x-auto border-b border-line px-5 md:px-10">
+      <div className="flex gap-6" role="tablist">
         {tabs.map((tab) => (
           <button
             key={tab.id}
@@ -326,16 +299,46 @@ export function Tabs<T extends string>({
             aria-selected={tab.id === active}
             onClick={() => onChange(tab.id)}
             className={cx(
-              "relative shrink-0 text-base",
-              tab.id === active ? "font-semibold" : "text-ink/80 hover:text-ink",
+              "relative -mb-px shrink-0 border-b-2 py-3 text-sm font-medium",
+              tab.id === active ? "border-fg text-fg" : "border-transparent text-muted hover:text-fg",
             )}
           >
             {tab.label}
-            {tab.id === active && <span className="absolute inset-x-0 bottom-0 h-[3px] bg-ink" aria-hidden />}
           </button>
         ))}
       </div>
     </nav>
+  );
+}
+
+/** A small segmented control, for ranges and modes. */
+export function Segmented<T extends string | number>({
+  options,
+  value,
+  onChange,
+  label,
+}: {
+  options: { value: T; label: string }[];
+  value: T;
+  onChange: (value: T) => void;
+  label: string;
+}) {
+  return (
+    <div className="inline-flex rounded-control border border-line bg-subtle p-0.5" role="group" aria-label={label}>
+      {options.map((o) => (
+        <button
+          key={String(o.value)}
+          onClick={() => onChange(o.value)}
+          aria-pressed={o.value === value}
+          className={cx(
+            "rounded-[5px] px-3 py-1 text-sm font-medium",
+            o.value === value ? "bg-surface text-fg shadow-[0_1px_2px_rgb(0_0_0/0.08)]" : "text-muted hover:text-fg",
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -361,7 +364,7 @@ export function Modal({
   if (!open) return null;
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-4 sm:items-center"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 backdrop-blur-[2px] sm:items-center"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
       <div
@@ -369,13 +372,13 @@ export function Modal({
         aria-modal="true"
         aria-label={title}
         className={cx(
-          "max-h-[90vh] w-full overflow-y-auto rounded-md border border-hairline bg-canvas p-6",
+          "max-h-[90vh] w-full overflow-y-auto rounded-panel border border-line bg-surface p-6 shadow-[0_24px_48px_-12px_rgb(0_0_0/0.25)]",
           wide ? "max-w-2xl" : "max-w-lg",
         )}
       >
         <div className="mb-5 flex items-start justify-between gap-4">
-          <h2 className="text-xl font-extrabold">{title}</h2>
-          <button onClick={onClose} className="text-2xl leading-none text-ink/70 hover:text-ink" aria-label="Close">
+          <h2 className="text-lg font-semibold">{title}</h2>
+          <button onClick={onClose} className="-mt-1 -mr-1 rounded-control p-1 text-xl leading-none text-muted hover:bg-subtle hover:text-fg" aria-label="Close">
             ×
           </button>
         </div>
@@ -385,7 +388,7 @@ export function Modal({
   );
 }
 
-/** Asks the user to type a name before something destructive happens. */
+/** Asks for the name to be typed before something destructive happens. */
 export function ConfirmDelete({
   open,
   name,
@@ -407,11 +410,11 @@ export function ConfirmDelete({
   return (
     <Modal open={open} title={`Delete ${what}`} onClose={onClose}>
       <div className="space-y-4">
-        <div>{consequence}</div>
+        <div className="text-muted">{consequence}</div>
         <Field label={`Type ${name} to confirm`}>
           <Input value={typed} onChange={(e) => setTyped(e.target.value)} autoFocus />
         </Field>
-        <div className="flex justify-end gap-3">
+        <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
@@ -442,10 +445,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <div
             key={t.id}
             className={cx(
-              "pointer-events-auto max-w-md rounded-md border bg-canvas px-5 py-3",
-              t.error ? "border-error text-error" : "border-hairline",
+              "pointer-events-auto flex max-w-md items-center gap-2.5 rounded-panel border bg-surface px-4 py-3 text-sm shadow-[0_12px_32px_-8px_rgb(0_0_0/0.25)]",
+              t.error ? "border-err/40" : "border-line",
             )}
           >
+            <span className={cx("size-2 shrink-0 rounded-full", t.error ? "bg-err" : "bg-ok")} aria-hidden />
             {t.text}
           </div>
         ))}
