@@ -1,8 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api, duration, timeAgo, type Deployment, type ServiceDetail } from "../../api";
-import { Badge, Button, EmptyState, ErrorText, SectionTitle, StatusDot, useToast } from "../../ui";
+import { Badge, Button, cx, Dot, EmptyState, ErrorText, SectionTitle, StatusDot, useToast } from "../../ui";
 import { LogPanel } from "./LogPanel";
+
+/** What started a deployment, in words. */
+const TRIGGERS: Record<string, string> = {
+  create: "First deploy",
+  manual: "Deployed by hand",
+  webhook: "Git push",
+  rollback: "Rollback",
+  env: "Variables changed",
+  domains: "Domains changed",
+  settings: "Settings changed",
+  reconcile: "Recovered",
+};
 
 export default function Deployments({ service }: { service: ServiceDetail }) {
   const toast = useToast();
@@ -39,57 +51,73 @@ export default function Deployments({ service }: { service: ServiceDetail }) {
     <div className="grid gap-8 xl:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
       <div>
         <SectionTitle>History</SectionTitle>
-        <ul className="overflow-hidden rounded-md border border-hairline bg-canvas">
-          {deployments.data.map((d) => (
-            <li key={d.id} className="border-b border-divider last:border-b-0">
-              <button
-                onClick={() => setSelected(d.id)}
-                className={`block w-full px-5 py-4 text-left ${selected === d.id ? "bg-canvas-tint" : "hover:bg-canvas-soft"}`}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <StatusDot status={d.status} />
-                  <span className="text-sm text-ink/70">{timeAgo(d.created_at)}</span>
-                </div>
-                <p className="mt-2 truncate font-medium">
-                  {d.commit_message || (d.image_ref && !d.image_ref.startsWith("jd-") ? d.image_ref : "Deployment")}
-                </p>
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-ink/70">
-                  {d.commit_sha && <code>{d.commit_sha.slice(0, 7)}</code>}
-                  <Badge>{d.trigger}</Badge>
-                  {d.kind === "preview" && <Badge>PR #{d.pr_number}</Badge>}
-                  {d.started_at && <span>{duration(d.started_at, d.finished_at)}</span>}
-                </div>
-              </button>
-              {(d.kind === "preview" && d.status === "running" && d.pr_number && previewHost(d.pr_number)) ||
-              (d.kind === "production" && d.image_ref && ["superseded", "running"].includes(d.status) && d.id !== service.current_deployment_id) ? (
-                <div className="flex gap-3 px-5 pb-4">
-                  {d.kind === "preview" && d.pr_number && (
-                    <a href={previewHost(d.pr_number)!} target="_blank" rel="noreferrer" className="text-sm">
-                      Open preview
-                    </a>
+        <ol className="relative">
+          {/* The rail the timeline's dots sit on. */}
+          <span className="absolute top-3 bottom-3 left-[15px] w-px bg-line" aria-hidden />
+          {deployments.data.map((d) => {
+            const canRollback =
+              d.kind === "production" &&
+              d.image_ref &&
+              ["superseded", "running"].includes(d.status) &&
+              d.id !== service.current_deployment_id;
+            const preview = d.kind === "preview" && d.status === "running" && d.pr_number ? previewHost(d.pr_number) : null;
+            return (
+              <li key={d.id} className="relative pl-10">
+                <span className="absolute top-[18px] left-[11px] flex size-[9px] items-center justify-center rounded-full bg-page ring-4 ring-page" aria-hidden>
+                  <Dot status={d.status} className="size-[9px]" />
+                </span>
+                <button
+                  onClick={() => setSelected(d.id)}
+                  aria-current={selected === d.id}
+                  className={cx(
+                    "block w-full rounded-panel px-3 py-3 text-left",
+                    selected === d.id ? "bg-surface ring-1 ring-line" : "hover:bg-subtle",
                   )}
-                  {d.kind === "production" && (
-                    <Button variant="tertiary" className="!py-2" busy={rollback.isPending} onClick={() => rollback.mutate(d.id)}>
-                      Roll back to this
-                    </Button>
-                  )}
-                </div>
-              ) : null}
-            </li>
-          ))}
-        </ul>
+                >
+                  <div className="flex items-baseline justify-between gap-3">
+                    <p className="truncate font-medium">
+                      {d.commit_message || (d.image_ref && !d.image_ref.startsWith("jd-") ? d.image_ref : "Deployment")}
+                    </p>
+                    <span className="shrink-0 text-[13px] text-muted">{timeAgo(d.created_at)}</span>
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted">
+                    <StatusDot status={d.status} className="!text-[13px]" />
+                    {d.commit_sha && <code className="text-[12px]">{d.commit_sha.slice(0, 7)}</code>}
+                    <span>{TRIGGERS[d.trigger] ?? d.trigger}</span>
+                    {d.kind === "preview" && <Badge>Preview of PR #{d.pr_number}</Badge>}
+                    {d.started_at && <span>{duration(d.started_at, d.finished_at)}</span>}
+                  </div>
+                </button>
+                {(canRollback || preview) && (
+                  <div className="flex gap-2 px-3 pb-2">
+                    {preview && (
+                      <a href={preview} target="_blank" rel="noreferrer" className="text-sm">
+                        Open preview
+                      </a>
+                    )}
+                    {canRollback && (
+                      <Button variant="secondary" className="h-8" busy={rollback.isPending} onClick={() => rollback.mutate(d.id)}>
+                        Roll back to this
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ol>
       </div>
       <div className="min-w-0">
         <SectionTitle>Log</SectionTitle>
         {selected ? (
           <>
-            <LogPanel url={`/api/v1/deployments/${selected}/logs`} title="Build and release" />
+            <LogPanel url={`/api/v1/deployments/${selected}/logs`} title="Build and release log" />
             {deployments.data.find((d) => d.id === selected)?.error && (
-              <p className="mt-3 text-sm text-error">{deployments.data.find((d) => d.id === selected)?.error}</p>
+              <p className="mt-3 text-sm text-err">{deployments.data.find((d) => d.id === selected)?.error}</p>
             )}
           </>
         ) : (
-          <p>Select a deployment.</p>
+          <p className="text-muted">Pick a deployment to see its log.</p>
         )}
       </div>
     </div>

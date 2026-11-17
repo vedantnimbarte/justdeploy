@@ -51,7 +51,7 @@ function Session({ serviceId }: { serviceId: string }) {
       fontFamily: '"JetBrains Mono", ui-monospace, monospace',
       fontSize: 13,
       cursorBlink: true,
-      theme: { background: "#211e1c", foreground: "#ffffff", cursor: "#f7e0a1" },
+      theme: { background: "#0f1115", foreground: "#e3e6ea", cursor: "#f5c26b" },
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -91,7 +91,7 @@ function Session({ serviceId }: { serviceId: string }) {
   }, [serviceId]);
 
   return (
-    <div className="overflow-hidden rounded-md bg-ink-deep">
+    <div className="overflow-hidden rounded-panel bg-console">
       <div className="border-b border-white/10 px-4 py-3 text-sm text-white" role="status">
         {state}
       </div>

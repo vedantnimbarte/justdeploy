@@ -157,11 +157,11 @@ export default function ServiceSettings({ service: s }: { service: ServiceDetail
                 <ul className="text-sm">
                   {s.volumes.map((v) => (
                     <li key={v.id}>
-                      <code>{v.mount_path}</code> <span className="text-ink/70">on {v.name}</span>
+                      <code>{v.mount_path}</code> <span className="text-muted">on {v.name}</span>
                     </li>
                   ))}
                 </ul>
-                <p className="mt-2 text-sm text-ink/70">
+                <p className="mt-2 text-sm text-muted">
                   A service with a volume or host port restarts in place on deploy, with a short gap.
                 </p>
               </div>
@@ -195,7 +195,7 @@ export default function ServiceSettings({ service: s }: { service: ServiceDetail
               <CodeLine value={s.webhooks.secret} secret />
             </Field>
           </div>
-          <div className="mt-6 border-t border-divider pt-6">
+          <div className="mt-6 border-t border-line pt-6">
             <Checkbox
               label="Preview deploys for pull requests (GitHub)"
               hint={
@@ -210,7 +210,7 @@ export default function ServiceSettings({ service: s }: { service: ServiceDetail
                 set("preview_enabled")(v);
               }}
             />
-            <p className="mt-2 text-sm text-ink/70">Save above to apply.</p>
+            <p className="mt-2 text-sm text-muted">Save above to apply.</p>
           </div>
         </Card>
       )}

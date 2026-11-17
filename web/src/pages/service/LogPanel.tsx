@@ -34,7 +34,7 @@ export function LogPanel({ url, title, height = "h-[32rem]" }: { url: string; ti
   }, [lines]);
 
   return (
-    <div className="overflow-hidden rounded-md bg-ink-deep text-white">
+    <div className="overflow-hidden rounded-panel bg-console text-white">
       <div className="flex items-center justify-between border-b border-white/10 px-4 py-3 text-sm">
         <span className="font-semibold">{title}</span>
         <span className="opacity-70">
@@ -53,7 +53,7 @@ export function LogPanel({ url, title, height = "h-[32rem]" }: { url: string; ti
           <span className="opacity-60">Waiting for output…</span>
         ) : (
           lines.map((line, i) => (
-            <div key={i} className={`whitespace-pre-wrap break-all ${line.startsWith("==>") ? "font-semibold text-gold-soft" : ""}`}>
+            <div key={i} className={`whitespace-pre-wrap break-all ${line.startsWith("==>") ? "font-semibold text-console-accent" : ""}`}>
               {line || " "}
             </div>
           ))

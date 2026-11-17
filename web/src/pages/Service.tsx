@@ -77,18 +77,23 @@ export default function ServicePage() {
           </>
         }
       >
-        <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2">
+        <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2">
           <StatusDot status={s.status} />
           <Badge>{kindLabel(s)}</Badge>
           {s.url && (
-            <a href={s.url} target="_blank" rel="noreferrer" className="break-all">
+            <a href={s.url} target="_blank" rel="noreferrer" className="font-mono text-[13px] break-all">
               {s.url.replace(/^https?:\/\//, "")}
             </a>
           )}
+          {s.latest_deployment?.commit_sha && (
+            <span className="text-sm text-muted">
+              Running <code className="text-[12px] text-fg">{s.latest_deployment.commit_sha.slice(0, 7)}</code>
+            </span>
+          )}
         </div>
         {s.connection_url && (
-          <div className="mt-5 max-w-2xl">
-            <p className="mb-2 text-sm font-semibold">Connection URL for services in {s.project.name}</p>
+          <div className="mt-6 max-w-2xl">
+            <p className="mb-2 text-sm font-medium">Connection URL for services in {s.project.name}</p>
             <CodeLine value={s.connection_url} secret />
           </div>
         )}

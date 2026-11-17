@@ -2,16 +2,18 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Area, AreaChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, bytes, type Sample, type ServiceDetail } from "../../api";
-import { Card, EmptyState, SectionTitle, Tabs } from "../../ui";
+import { Card, EmptyState, Segmented, SectionTitle } from "../../ui";
 
-const INK = "#312d2a";
-const TEAL = "#006b8f";
-const GRID = "#e9e7e4";
+// One series per chart uses slot 1; network's in/out use slots 3 and 4, as on Analytics.
+const LINE = "var(--jd-series-1)";
+const NET_IN = "var(--jd-series-3)";
+const NET_OUT = "var(--jd-series-4)";
+const GRID = "var(--jd-line)";
 
 const RANGES = [
-  { id: "60", label: "1 hour" },
-  { id: "360", label: "6 hours" },
-  { id: "1440", label: "24 hours" },
+  { id: "60", label: "1h" },
+  { id: "360", label: "6h" },
+  { id: "1440", label: "24h" },
 ] as const;
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -28,8 +30,8 @@ function Chart({
   return (
     <Card>
       <div className="mb-4 flex items-baseline justify-between gap-3">
-        <h3 className="text-lg font-extrabold">{title}</h3>
-        <span className="font-mono text-sm">{latest}</span>
+        <h3 className="text-lg font-semibold">{title}</h3>
+        <span className="text-sm tabular-nums text-muted">{latest}</span>
       </div>
       <div className="h-56">
         <ResponsiveContainer width="100%" height="100%">
@@ -49,14 +51,22 @@ export default function Metrics({ service }: { service: ServiceDetail }) {
   });
   const data = samples.data ?? [];
   const last = data[data.length - 1];
-  const axis = { stroke: "#5f5a55", fontSize: 12, tickLine: false, axisLine: false };
+  const axis = { stroke: "var(--jd-muted)", fontSize: 12, tickLine: false, axisLine: false };
 
   return (
-    <div className="grid gap-8">
-      <div className="-mx-4 md:-mx-10 xl:-mx-[72px]">
-        <Tabs tabs={RANGES.map((r) => ({ id: r.id, label: r.label }))} active={range} onChange={setRange} />
-      </div>
-      <SectionTitle>Resource use</SectionTitle>
+    <div className="grid gap-6">
+      <SectionTitle
+        action={
+          <Segmented
+            label="Chart range"
+            value={range}
+            onChange={setRange}
+            options={RANGES.map((r) => ({ value: r.id, label: r.label }))}
+          />
+        }
+      >
+        Resource use
+      </SectionTitle>
       {data.length === 0 ? (
         <EmptyState title="No samples yet">
           Samples are taken every 30 seconds while the service runs, and kept for 24 hours.
@@ -69,7 +79,7 @@ export default function Metrics({ service }: { service: ServiceDetail }) {
               <XAxis dataKey="ts" tickFormatter={time} {...axis} minTickGap={40} />
               <YAxis tickFormatter={(v) => `${v}%`} {...axis} width={44} />
               <Tooltip labelFormatter={(v) => time(String(v))} formatter={(v) => [`${Number(v).toFixed(1)}%`, "CPU"]} />
-              <Area type="monotone" dataKey="cpu_percent" stroke={INK} fill="#f1efed" strokeWidth={2} isAnimationActive={false} />
+              <Area type="monotone" dataKey="cpu_percent" stroke={LINE} fill="var(--jd-track)" strokeWidth={2} isAnimationActive={false} />
             </AreaChart>
           </Chart>
           <Chart title="Memory" latest={bytes(last?.memory_bytes)}>
@@ -78,7 +88,7 @@ export default function Metrics({ service }: { service: ServiceDetail }) {
               <XAxis dataKey="ts" tickFormatter={time} {...axis} minTickGap={40} />
               <YAxis tickFormatter={(v) => bytes(Number(v))} {...axis} width={64} />
               <Tooltip labelFormatter={(v) => time(String(v))} formatter={(v) => [bytes(Number(v)), "Memory"]} />
-              <Area type="monotone" dataKey="memory_bytes" stroke={INK} fill="#f1efed" strokeWidth={2} isAnimationActive={false} />
+              <Area type="monotone" dataKey="memory_bytes" stroke={LINE} fill="var(--jd-track)" strokeWidth={2} isAnimationActive={false} />
             </AreaChart>
           </Chart>
           <Chart title="Network" latest={`↓ ${bytes(last?.net_rx_rate)}/s  ↑ ${bytes(last?.net_tx_rate)}/s`}>
@@ -90,8 +100,8 @@ export default function Metrics({ service }: { service: ServiceDetail }) {
                 labelFormatter={(v) => time(String(v))}
                 formatter={(v, name) => [`${bytes(Number(v))}/s`, name === "net_rx_rate" ? "In" : "Out"]}
               />
-              <Line type="monotone" dataKey="net_rx_rate" stroke={INK} dot={false} strokeWidth={2} isAnimationActive={false} />
-              <Line type="monotone" dataKey="net_tx_rate" stroke={TEAL} dot={false} strokeWidth={2} isAnimationActive={false} />
+              <Line type="monotone" dataKey="net_rx_rate" stroke={NET_IN} dot={false} strokeWidth={2} isAnimationActive={false} />
+              <Line type="monotone" dataKey="net_tx_rate" stroke={NET_OUT} dot={false} strokeWidth={2} isAnimationActive={false} />
             </LineChart>
           </Chart>
         </div>

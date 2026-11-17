@@ -58,19 +58,19 @@ export default function Backups({ service }: { service: ServiceDetail }) {
         <SectionTitle>Backups</SectionTitle>
         <Card className="!p-0">
           {backups.data?.length ? (
-            <ul className="divide-y divide-divider">
+            <ul className="divide-y divide-line">
               {backups.data.map((b) => (
                 <li key={b.id} className="flex flex-wrap items-center justify-between gap-3 px-6 py-4">
                   <div className="min-w-0">
                     <StatusDot status={b.status} />
                     <p className="mt-1 truncate font-mono text-sm">{b.object_key}</p>
-                    <p className="text-sm text-ink/70">
-                      {timeAgo(b.created_at)} · {b.trigger} · {name(b.destination_id)}
-                      {b.size_bytes != null && ` · ${bytes(b.size_bytes)}`}
+                    <p className="text-sm text-muted">
+                      {timeAgo(b.created_at)}, {b.trigger === "schedule" ? "scheduled" : "by hand"}, to {name(b.destination_id)}
+                      {b.size_bytes != null && `, ${bytes(b.size_bytes)}`}
                     </p>
-                    {b.error && <p className="text-sm text-error">{b.error}</p>}
+                    {b.error && <p className="text-sm text-err">{b.error}</p>}
                     {b.restore_status && (
-                      <p className={`text-sm ${b.restore_status === "failed" ? "text-error" : ""}`}>
+                      <p className={`text-sm ${b.restore_status === "failed" ? "text-err" : ""}`}>
                         Restore {b.restore_status}
                         {b.restored_at && ` ${timeAgo(b.restored_at)}`}
                         {b.restore_error && `: ${b.restore_error}`}
@@ -78,7 +78,7 @@ export default function Backups({ service }: { service: ServiceDetail }) {
                     )}
                   </div>
                   {b.status === "succeeded" && (
-                    <Button variant="secondary" className="!py-2" onClick={() => setRestoring(b)}>
+                    <Button variant="secondary" className="h-8" onClick={() => setRestoring(b)}>
                       Restore
                     </Button>
                   )}
@@ -86,13 +86,13 @@ export default function Backups({ service }: { service: ServiceDetail }) {
               ))}
             </ul>
           ) : (
-            <p className="px-6 py-4 text-ink/70">No backups yet.</p>
+            <p className="px-6 py-4 text-muted">No backups yet.</p>
           )}
         </Card>
       </div>
       <div className="grid content-start gap-8">
         <Card>
-          <h3 className="mb-4 text-lg font-extrabold">Back up now</h3>
+          <h3 className="mb-4 text-lg font-semibold">Back up now</h3>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
             <Field label="Destination" className="flex-1">
               <Select value={destination} onChange={(e) => setDestination(e.target.value)}>
@@ -158,8 +158,8 @@ function ScheduleForm({
   });
   return (
     <Card>
-      <h3 className="mb-1 text-lg font-extrabold">Schedule</h3>
-      <p className="mb-4 text-sm text-ink/70">
+      <h3 className="mb-1 text-lg font-semibold">Schedule</h3>
+      <p className="mb-4 text-sm text-muted">
         {current ? `Runs on "${current.cron}" (UTC), keeping ${current.keep}.` : "No scheduled backups."}
       </p>
       <div className="grid gap-4">

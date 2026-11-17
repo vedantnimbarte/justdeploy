@@ -47,13 +47,13 @@ export default function Domains({ service }: { service: ServiceDetail }) {
       <div>
         <SectionTitle>Domains</SectionTitle>
         <Card className="!p-0">
-          <ul className="divide-y divide-divider">
+          <ul className="divide-y divide-line">
             {service.generated_host && (
               <li className="flex flex-wrap items-center justify-between gap-3 px-6 py-4">
                 <a href={`${scheme}://${service.generated_host}`} target="_blank" rel="noreferrer" className="break-all">
                   {service.generated_host}
                 </a>
-                <span className="text-sm text-ink/70">Generated</span>
+                <span className="text-sm text-muted">Generated</span>
               </li>
             )}
             {service.domains.map((d) => (
@@ -61,7 +61,7 @@ export default function Domains({ service }: { service: ServiceDetail }) {
                 <a href={`${scheme}://${d.hostname}`} target="_blank" rel="noreferrer" className="break-all">
                   {d.hostname}
                 </a>
-                <Button variant="tertiary" className="!py-2" onClick={() => remove.mutate(d.id)}>
+                <Button variant="tertiary" className="h-8" onClick={() => remove.mutate(d.id)}>
                   Remove
                 </Button>
               </li>
@@ -71,7 +71,7 @@ export default function Domains({ service }: { service: ServiceDetail }) {
       </div>
       <Card>
         <form onSubmit={submit} className="grid gap-5">
-          <h3 className="text-lg font-extrabold">Add a custom domain</h3>
+          <h3 className="text-lg font-semibold">Add a custom domain</h3>
           <p>
             Point an <strong>A</strong> record for the domain at this server first.
             {settings.data?.tls

@@ -72,7 +72,7 @@ export default function Env({ service }: { service: ServiceDetail }) {
           <p>Loading…</p>
         ) : (
           <div className="space-y-3">
-            {rows.length === 0 && <p className="text-ink/70">No variables yet.</p>}
+            {rows.length === 0 && <p className="text-muted">No variables yet.</p>}
             {rows.map((row, i) => (
               <div key={i} className="grid gap-2 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto]">
                 <Input
