@@ -1,4 +1,4 @@
-// The system overview at the top of the home page: the server, all apps together,
+// The system overview on the Analytics page: the server, all apps together,
 // platform activity, Docker's disk usage, and anything that needs attention.
 //
 // Chart colours are the validated categorical slots (blue/orange for server vs
@@ -123,7 +123,7 @@ export default function SystemOverview() {
           </div>
         }
       >
-        System
+        Server
       </SectionTitle>
 
       {data && data.warnings.length > 0 && <Warnings warnings={data.warnings} />}

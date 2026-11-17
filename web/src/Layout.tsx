@@ -4,6 +4,7 @@ import { api } from "./api";
 
 const NAV = [
   { to: "/projects", label: "Projects" },
+  { to: "/analytics", label: "Analytics" },
   { to: "/templates", label: "Templates" },
   { to: "/settings", label: "Settings" },
 ];

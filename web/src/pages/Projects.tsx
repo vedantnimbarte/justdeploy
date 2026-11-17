@@ -1,11 +1,8 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { lazy, Suspense, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router";
 import { api, kindLabel, type Project } from "../api";
-import { Band, Button, ButtonLink, EmptyState, ErrorText, Field, Input, Modal, PageHeader, SectionTitle, StatusDot } from "../ui";
-
-// Charts are the heaviest code on the page; the project list doesn't wait for them.
-const SystemOverview = lazy(() => import("./SystemOverview"));
+import { Band, Button, ButtonLink, EmptyState, ErrorText, Field, Input, Modal, PageHeader, StatusDot } from "../ui";
 
 export default function ProjectsPage() {
   const [creating, setCreating] = useState(false);
@@ -29,13 +26,7 @@ export default function ProjectsPage() {
           </>
         }
       />
-      <Band tone="white">
-        <Suspense fallback={<p>Loading system figures…</p>}>
-          <SystemOverview />
-        </Suspense>
-      </Band>
       <Band tone="soft">
-        <SectionTitle>Your projects</SectionTitle>
         {projects.isPending ? (
           <p>Loading…</p>
         ) : projects.isError ? (

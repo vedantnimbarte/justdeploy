@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 import { api } from "./api";
 import Layout from "./Layout";
+import AnalyticsPage from "./pages/Analytics";
 import AuthPage from "./pages/Auth";
 import NewServicePage from "./pages/NewService";
 import ProjectPage from "./pages/Project";
@@ -39,6 +40,7 @@ function AuthGate() {
         <Route path="/projects/:id" element={<ProjectPage />} />
         <Route path="/projects/:id/new" element={<NewServicePage />} />
         <Route path="/services/:id" element={<ServicePage />} />
+        <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/templates" element={<TemplatesPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
