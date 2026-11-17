@@ -1,20 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { api, duration, timeAgo, type Deployment, type ServiceDetail } from "../../api";
+import { api, duration, timeAgo, triggerLabel, type Deployment, type ServiceDetail } from "../../api";
 import { Badge, Button, cx, Dot, EmptyState, ErrorText, SectionTitle, StatusDot, useToast } from "../../ui";
 import { LogPanel } from "./LogPanel";
-
-/** What started a deployment, in words. */
-const TRIGGERS: Record<string, string> = {
-  create: "First deploy",
-  manual: "Deployed by hand",
-  webhook: "Git push",
-  rollback: "Rollback",
-  env: "Variables changed",
-  domains: "Domains changed",
-  settings: "Settings changed",
-  reconcile: "Recovered",
-};
 
 export default function Deployments({ service }: { service: ServiceDetail }) {
   const toast = useToast();
@@ -83,7 +71,7 @@ export default function Deployments({ service }: { service: ServiceDetail }) {
                   <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted">
                     <StatusDot status={d.status} className="!text-[13px]" />
                     {d.commit_sha && <code className="text-[12px]">{d.commit_sha.slice(0, 7)}</code>}
-                    <span>{TRIGGERS[d.trigger] ?? d.trigger}</span>
+                    <span>{triggerLabel(d.trigger)}</span>
                     {d.kind === "preview" && <Badge>Preview of PR #{d.pr_number}</Badge>}
                     {d.started_at && <span>{duration(d.started_at, d.finished_at)}</span>}
                   </div>

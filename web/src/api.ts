@@ -205,6 +205,21 @@ export function bytes(n: number | null | undefined): string {
   return `${value.toFixed(value < 10 && unit > 0 ? 1 : 0)} ${units[unit]}`;
 }
 
+/** What started a deployment, in words. */
+export function triggerLabel(trigger: string): string {
+  const labels: Record<string, string> = {
+    create: "First deploy",
+    manual: "Deployed by hand",
+    webhook: "Git push",
+    rollback: "Rollback",
+    env: "Variables changed",
+    domains: "Domains changed",
+    settings: "Settings changed",
+    reconcile: "Recovered",
+  };
+  return labels[trigger] ?? trigger;
+}
+
 export function kindLabel(service: Pick<Service, "kind" | "engine" | "image">): string {
   if (service.kind === "database") {
     const labels: Record<string, string> = {

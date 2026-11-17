@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { api, kindLabel, timeAgo, type Project, type Service } from "../api";
+import { api, kindLabel, timeAgo, triggerLabel, type Project, type Service } from "../api";
 import { Badge, Band, Button, ButtonLink, ConfirmDelete, EmptyState, ErrorText, PageHeader, StatusDot } from "../ui";
 
 export default function ProjectPage() {
@@ -117,7 +117,7 @@ function ServiceRow({ service: s }: { service: Service }) {
           {d ? (
             <p className="flex min-w-0 items-baseline gap-2">
               {d.commit_sha && <code className="shrink-0 text-[12px] text-muted">{d.commit_sha.slice(0, 7)}</code>}
-              <span className="truncate">{d.commit_message ?? `Deployed by ${d.trigger}`}</span>
+              <span className="truncate">{d.commit_message ?? triggerLabel(d.trigger)}</span>
               <span className="ml-auto shrink-0 text-muted">{timeAgo(d.created_at)}</span>
             </p>
           ) : (
