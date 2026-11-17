@@ -1,9 +1,19 @@
 mod auth;
+mod backups;
 mod config;
 mod crypto;
+mod docker;
+mod engines;
 mod error;
 mod handlers;
+mod metrics;
+mod models;
+mod names;
+mod queue;
+mod services;
 mod state;
+mod templates;
+mod webhooks;
 
 use anyhow::Context;
 use std::sync::Arc;
@@ -46,6 +56,9 @@ async fn main() -> anyhow::Result<()> {
         login_limiter: auth::RateLimiter::default(),
         config,
     });
+
+    queue::maintenance::remove_stale_helpers(&state).await;
+    queue::spawn(state.clone());
 
     let app = handlers::router(state.clone()).layer(TraceLayer::new_for_http());
     let listener = tokio::net::TcpListener::bind(state.config.bind).await?;

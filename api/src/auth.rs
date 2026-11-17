@@ -125,8 +125,18 @@ pub async fn admin_email(db: &PgPool) -> Result<String> {
         .await?)
 }
 
-/// Sets a new password and signs every session out. Used by `justdeploy reset-password`.
-pub async fn reset_password(db: &PgPool, password: &str) -> Result<()> {
+/// Checks the admin's current password, counting toward the login rate limit.
+pub async fn check_password(state: &SharedState, password: &str) -> Result<bool> {
+    if !state.login_limiter.check("password-change") {
+        return Err(Error::RateLimited);
+    }
+    let hash = sqlx::query_scalar!("SELECT password_hash FROM admin")
+        .fetch_one(&state.db)
+        .await?;
+    verify_password(password, &hash)
+}
+
+pub async fn set_password(db: &PgPool, password: &str) -> Result<()> {
     let hash = hash_password(password)?;
     let updated = sqlx::query!("UPDATE admin SET password_hash = $1", hash)
         .execute(db)
@@ -135,6 +145,12 @@ pub async fn reset_password(db: &PgPool, password: &str) -> Result<()> {
     if updated == 0 {
         return Err(bad_request("no admin exists yet; open the dashboard to create one"));
     }
+    Ok(())
+}
+
+/// Sets a new password and signs every session out. Used by `justdeploy reset-password`.
+pub async fn reset_password(db: &PgPool, password: &str) -> Result<()> {
+    set_password(db, password).await?;
     sqlx::query!("DELETE FROM sessions").execute(db).await?;
     Ok(())
 }
