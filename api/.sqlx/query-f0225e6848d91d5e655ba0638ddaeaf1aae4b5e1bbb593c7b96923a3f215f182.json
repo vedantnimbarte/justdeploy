@@ -1,0 +1,62 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.service_id, s.destination_id, s.cron, s.last_run_at\n         FROM backup_schedules s JOIN services sv ON sv.id = s.service_id\n         WHERE sv.desired_state = 'running'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "service_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "backup_schedules",
+            "name": "service_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "destination_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "backup_schedules",
+            "name": "destination_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "cron",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "backup_schedules",
+            "name": "cron"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "last_run_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "backup_schedules",
+            "name": "last_run_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "f0225e6848d91d5e655ba0638ddaeaf1aae4b5e1bbb593c7b96923a3f215f182"
+}

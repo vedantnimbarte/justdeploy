@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT keep FROM backup_schedules WHERE service_id = $1 AND destination_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "keep",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "backup_schedules",
+            "name": "keep"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5c7816924a0d092b36975aa11ae5ab4596eb4366d33afae7bff2b200ab021226"
+}

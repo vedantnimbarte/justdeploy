@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT image_ref AS \"image!\" FROM deployments\n           WHERE service_id = $1 AND image_ref LIKE 'jd-%'\n             AND ($2::int IS NULL OR pr_number = $2)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "image!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "image_ref"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "154047a95e01523b3ddcabe295979fe43aa6f86228658494f72fe86ea58cf19e"
+}

@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT service_id, destination_id, object_key FROM backups WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "service_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "backups",
+            "name": "service_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "destination_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "backups",
+            "name": "destination_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "object_key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "backups",
+            "name": "object_key"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "0f80071de4b86c7e61d54c0cccb5415f63cff0bc9aa3d26c1a6968537ce57ae9"
+}

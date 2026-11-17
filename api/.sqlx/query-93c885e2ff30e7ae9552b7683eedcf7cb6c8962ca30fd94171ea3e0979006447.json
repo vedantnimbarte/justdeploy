@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT service_id FROM deployments WHERE status IN ('queued', 'building', 'deploying')",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "service_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "service_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "93c885e2ff30e7ae9552b7683eedcf7cb6c8962ca30fd94171ea3e0979006447"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM env_vars WHERE service_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "19f4bed01ea21dcd06dac6c64dd4f5cb1506f9cba645e54e66a0116d6ac80736"
+}

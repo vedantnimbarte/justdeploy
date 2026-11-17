@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE backup_schedules SET last_run_at = $2 WHERE service_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fe6f7357eb730d02f5e8bb360072086066a390b5e9539e797e78faee29963da4"
+}

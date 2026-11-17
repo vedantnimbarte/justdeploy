@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT config_enc FROM backup_destinations WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "config_enc",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "backup_destinations",
+            "name": "config_enc"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ec6c5a3802602994a2ac219e677754f8f0f928f0eb168ff3ad98c82d37dd2065"
+}

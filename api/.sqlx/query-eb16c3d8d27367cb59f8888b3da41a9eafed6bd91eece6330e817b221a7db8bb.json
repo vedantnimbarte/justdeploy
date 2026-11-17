@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE backups SET restore_status = 'queued', restore_error = NULL\n         WHERE id = $1 AND status = 'succeeded'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "eb16c3d8d27367cb59f8888b3da41a9eafed6bd91eece6330e817b221a7db8bb"
+}

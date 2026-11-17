@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM domains WHERE id = $1 AND service_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "39a74fbf394ba063602fa40f3edeaa7c63763a317285a2a96e1dc2aa8650d72a"
+}

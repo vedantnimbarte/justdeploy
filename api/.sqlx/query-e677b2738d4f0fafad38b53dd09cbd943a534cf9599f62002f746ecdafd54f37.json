@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE services SET desired_state = $2 WHERE id = $1 AND desired_state <> 'deleting'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e677b2738d4f0fafad38b53dd09cbd943a534cf9599f62002f746ecdafd54f37"
+}

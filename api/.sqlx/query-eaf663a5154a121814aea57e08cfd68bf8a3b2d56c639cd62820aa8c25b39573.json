@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE jobs SET locked_at = NULL WHERE locked_at IS NOT NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "eaf663a5154a121814aea57e08cfd68bf8a3b2d56c639cd62820aa8c25b39573"
+}

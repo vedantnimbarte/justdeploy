@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM deployment_logs WHERE deployment_id IN\n            (SELECT id FROM deployments WHERE created_at < now() - interval '30 days')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "698ba4112cde6a913b0b2ef652aedf5e7db29c8a74ccfed4d929f507437f9517"
+}

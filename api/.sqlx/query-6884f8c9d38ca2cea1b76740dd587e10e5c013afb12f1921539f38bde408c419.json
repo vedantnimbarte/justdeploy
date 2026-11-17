@@ -1,0 +1,304 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT * FROM services WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "project_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "project_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "repo_url",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "repo_url"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "branch",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "branch"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "root_dir",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "root_dir"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "git_token_enc",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "git_token_enc"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "build_type",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "build_type"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "dockerfile_path",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "dockerfile_path"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "image",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "image"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "engine",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "engine"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "port",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "port"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "public",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "public"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "health_path",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "health_path"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "cpu_millis",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "cpu_millis"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "memory_mb",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "memory_mb"
+          }
+        }
+      },
+      {
+        "ordinal": 17,
+        "name": "public_port",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "public_port"
+          }
+        }
+      },
+      {
+        "ordinal": 18,
+        "name": "preview_enabled",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "preview_enabled"
+          }
+        }
+      },
+      {
+        "ordinal": 19,
+        "name": "webhook_secret",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "webhook_secret"
+          }
+        }
+      },
+      {
+        "ordinal": 20,
+        "name": "desired_state",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "desired_state"
+          }
+        }
+      },
+      {
+        "ordinal": 21,
+        "name": "current_deployment_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "current_deployment_id"
+          }
+        }
+      },
+      {
+        "ordinal": 22,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 23,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "6884f8c9d38ca2cea1b76740dd587e10e5c013afb12f1921539f38bde408c419"
+}

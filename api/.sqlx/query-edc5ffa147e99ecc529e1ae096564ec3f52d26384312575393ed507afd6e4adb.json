@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO backup_schedules (service_id, destination_id, cron, keep, last_run_at)\n         VALUES ($1, $2, $3, $4, now())\n         ON CONFLICT (service_id) DO UPDATE\n            SET destination_id = EXCLUDED.destination_id, cron = EXCLUDED.cron, keep = EXCLUDED.keep",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "edc5ffa147e99ecc529e1ae096564ec3f52d26384312575393ed507afd6e4adb"
+}
