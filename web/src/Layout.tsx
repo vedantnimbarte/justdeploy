@@ -8,7 +8,7 @@ const NAV = [
   { to: "/settings", label: "Settings" },
 ];
 
-/** The mark and the word as one lockup: the only place the brand red appears. */
+/** The mark and the word as one lockup, in ink. */
 export function Logo() {
   return <img src="/logo-full.svg" alt="justdeploy" className="block h-7 w-auto md:h-8" />;
 }
