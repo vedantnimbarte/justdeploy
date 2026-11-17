@@ -58,6 +58,9 @@ async fn main() -> anyhow::Result<()> {
     });
 
     queue::maintenance::remove_stale_helpers(&state).await;
+    queue::release_locks(&state.db)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     queue::spawn(state.clone());
 
     let app = handlers::router(state.clone()).layer(TraceLayer::new_for_http());

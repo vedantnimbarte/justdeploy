@@ -71,6 +71,7 @@ pub async fn view_service(
     project: &Project,
     service: Service,
     containers: &[ContainerSummary],
+    base: &str,
 ) -> Result<ServiceView> {
     let latest = latest_deployment(state, service.id).await?;
     let id = service.id.to_string();
@@ -81,10 +82,9 @@ pub async fn view_service(
         .collect();
     let url = if service.public && service.port.is_some() {
         let scheme = if state.config.tls() { "https" } else { "http" };
-        let base = services::base_domain(state).await?;
         Some(format!(
             "{scheme}://{}",
-            names::generated_host(&service.name, &project.name, &base)
+            names::generated_host(&service.name, &project.name, base)
         ))
     } else {
         None
@@ -99,25 +99,37 @@ pub async fn view_service(
     })
 }
 
-async fn project_view(state: &SharedState, project: Project) -> Result<ProjectView> {
-    let id = project.id.to_string();
-    let containers = docker::list(&state.docker, &[(LABEL_PROJECT, &id)]).await?;
-    let mut views = Vec::new();
-    for service in services::list_services(&state.db, project.id).await? {
-        views.push(view_service(state, &project, service, &containers).await?);
-    }
+async fn project_view(
+    state: &SharedState,
+    project: Project,
+    containers: &[ContainerSummary],
+    base: &str,
+) -> Result<ProjectView> {
+    let services = services::list_services(&state.db, project.id).await?;
+    let views = futures::future::try_join_all(
+        services
+            .into_iter()
+            .map(|service| view_service(state, &project, service, containers, base)),
+    )
+    .await?;
     Ok(ProjectView {
         project,
         services: views,
     })
 }
 
+/// One Docker listing and one settings read for the whole page.
 pub async fn list(_: Admin, State(state): State<SharedState>) -> Result<Json<Vec<ProjectView>>> {
-    let mut out = Vec::new();
-    for project in services::list_projects(&state.db).await? {
-        out.push(project_view(&state, project).await?);
-    }
-    Ok(Json(out))
+    let containers = docker::list(&state.docker, &[]).await?;
+    let base = services::base_domain(&state).await?;
+    let projects = services::list_projects(&state.db).await?;
+    let views = futures::future::try_join_all(
+        projects
+            .into_iter()
+            .map(|project| project_view(&state, project, &containers, &base)),
+    )
+    .await?;
+    Ok(Json(views))
 }
 
 #[derive(Deserialize)]
@@ -132,7 +144,10 @@ pub async fn create(_: Admin, State(state): State<SharedState>, Json(body): Json
 
 pub async fn get(_: Admin, State(state): State<SharedState>, Path(id): Path<Uuid>) -> Result<Json<ProjectView>> {
     let project = services::get_project(&state.db, id).await?;
-    Ok(Json(project_view(&state, project).await?))
+    let pid = project.id.to_string();
+    let containers = docker::list(&state.docker, &[(LABEL_PROJECT, &pid)]).await?;
+    let base = services::base_domain(&state).await?;
+    Ok(Json(project_view(&state, project, &containers, &base).await?))
 }
 
 pub async fn delete(_: Admin, State(state): State<SharedState>, Path(id): Path<Uuid>) -> Result<StatusCode> {
@@ -188,7 +203,7 @@ pub async fn get_service(_: Admin, State(state): State<SharedState>, Path(id): P
         volumes: services::volumes(&state.db, id).await?,
         domains: services::domains(&state.db, id).await?,
         generated_host,
-        view: view_service(&state, &project, service, &containers).await?,
+        view: view_service(&state, &project, service, &containers, &base).await?,
         project,
     }))
 }

@@ -30,15 +30,26 @@ use uuid::Uuid;
 
 type EventStream = Response;
 
-/// Deployment log, polled from the database so a reconnect resumes where it left off.
-pub async fn deployment_logs(_: Admin, State(state): State<SharedState>, Path(id): Path<Uuid>) -> Result<EventStream> {
+/// Deployment log, polled from the database. Each event carries the id of its last
+/// line, so a reconnecting EventSource resumes where it left off.
+pub async fn deployment_logs(
+    _: Admin,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
+) -> Result<EventStream> {
     services::get_deployment(&state.db, id).await?;
-    let stream = async_stream_logs(state, id);
+    let after = headers
+        .get("last-event-id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(0);
+    let stream = async_stream_logs(state, id, after);
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()).into_response())
 }
 
-fn async_stream_logs(state: SharedState, id: Uuid) -> impl Stream<Item = Result<Event, Infallible>> + Send {
-    futures::stream::unfold((state, 0_i64, false), move |(state, after, done)| async move {
+fn async_stream_logs(state: SharedState, id: Uuid, after: i64) -> impl Stream<Item = Result<Event, Infallible>> + Send {
+    futures::stream::unfold((state, after, false), move |(state, after, done)| async move {
         if done {
             return None;
         }
@@ -54,7 +65,10 @@ fn async_stream_logs(state: SharedState, id: Uuid) -> impl Stream<Item = Result<
             if let Some(last) = lines.last() {
                 let last_id = last.id;
                 let text = lines.into_iter().map(|l| l.line).collect::<Vec<_>>().join("\n");
-                return Some((Ok(Event::default().data(text)), (state, last_id, false)));
+                return Some((
+                    Ok(Event::default().id(last_id.to_string()).data(text)),
+                    (state, last_id, false),
+                ));
             }
             let finished = sqlx::query_scalar!("SELECT status FROM deployments WHERE id = $1", id)
                 .fetch_optional(&state.db)

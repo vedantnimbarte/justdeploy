@@ -83,6 +83,19 @@ async fn claim(db: &PgPool, queue: &str) -> Result<Option<Claimed>> {
     .await?)
 }
 
+/// One control plane runs at a time, so any job still locked at startup belonged
+/// to the previous process and can be picked up again straight away.
+pub async fn release_locks(db: &PgPool) -> Result<()> {
+    let released = sqlx::query!("UPDATE jobs SET locked_at = NULL WHERE locked_at IS NOT NULL")
+        .execute(db)
+        .await?
+        .rows_affected();
+    if released > 0 {
+        tracing::info!(released, "resuming jobs interrupted by a restart");
+    }
+    Ok(())
+}
+
 pub fn spawn(state: SharedState) {
     for queue in [DEPLOYS, BACKUPS] {
         let state = state.clone();
