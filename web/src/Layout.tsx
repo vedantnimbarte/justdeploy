@@ -8,14 +8,9 @@ const NAV = [
   { to: "/settings", label: "Settings" },
 ];
 
-/** The mark in ink, then the wordmark: the only place the brand red appears. */
+/** The mark and the word as one lockup: the only place the brand red appears. */
 export function Logo() {
-  return (
-    <span className="inline-flex items-center gap-2.5 text-2xl font-extrabold text-brand">
-      <img src="/logo.svg" alt="" width={36} height={36} className="size-9" />
-      justdeploy
-    </span>
-  );
+  return <img src="/logo-full.svg" alt="justdeploy" className="block h-7 w-auto md:h-8" />;
 }
 
 function Wordmark() {

@@ -1,4 +1,4 @@
-<img src="web/public/logo.svg" alt="" width="72">
+<img src="web/public/logo-full.svg" alt="justdeploy" height="56">
 
 # justdeploy
 
