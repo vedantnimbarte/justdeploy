@@ -1,8 +1,8 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router";
-import { api, kindLabel, type Project } from "../api";
-import { Band, Button, ButtonLink, EmptyState, ErrorText, Field, Input, Modal, PageHeader, StatusDot } from "../ui";
+import { api, timeAgo, type Project } from "../api";
+import { Band, Button, ButtonLink, cx, Dot, EmptyState, ErrorText, Field, Input, Modal, PageHeader } from "../ui";
 
 export default function ProjectsPage() {
   const [creating, setCreating] = useState(false);
@@ -16,19 +16,19 @@ export default function ProjectsPage() {
     <>
       <PageHeader
         title="Projects"
-        lead="Each project is a private network. Its services reach each other by name, like db:5432."
+        lead="Each project is a private network: its services reach each other by name, like db:5432."
         actions={
           <>
-            <Button onClick={() => setCreating(true)}>New project</Button>
             <ButtonLink to="/templates" variant="secondary">
               Deploy a template
             </ButtonLink>
+            <Button onClick={() => setCreating(true)}>New project</Button>
           </>
         }
       />
-      <Band tone="soft">
+      <Band>
         {projects.isPending ? (
-          <p>Loading…</p>
+          <p className="text-muted">Loading…</p>
         ) : projects.isError ? (
           <ErrorText error={projects.error} />
         ) : projects.data.length === 0 ? (
@@ -43,15 +43,14 @@ export default function ProjectsPage() {
               </>
             }
           >
-            Start from a template, or create a project and add an app from Git, a Docker image or a
-            database.
+            Start from a template, or create a project and add an app from Git, a Docker image or a database.
           </EmptyState>
         ) : (
-          <div className="grid gap-8 md:grid-cols-2 xl:grid-cols-3">
+          <ul className="overflow-hidden rounded-panel border border-line bg-surface">
             {projects.data.map((project) => (
-              <ProjectCard key={project.id} project={project} />
+              <ProjectRow key={project.id} project={project} />
             ))}
-          </div>
+          </ul>
         )}
       </Band>
       <NewProject open={creating} onClose={() => setCreating(false)} />
@@ -59,28 +58,55 @@ export default function ProjectsPage() {
   );
 }
 
-function ProjectCard({ project }: { project: Project }) {
+/** One project per row: its services as a strip of live dots, then what matters. */
+function ProjectRow({ project }: { project: Project }) {
+  const services = project.services;
+  const trouble = services.filter((s) => s.status === "crashed" || s.status === "failed").length;
+  const deploying = services.filter((s) => s.status === "deploying").length;
+  const running = services.filter((s) => s.status === "running").length;
+  const lastDeploy = services
+    .map((s) => s.latest_deployment?.created_at)
+    .filter((d): d is string => Boolean(d))
+    .sort()
+    .at(-1);
+
   return (
-    <Link
-      to={`/projects/${project.id}`}
-      className="block rounded-md border border-hairline bg-canvas p-6 text-ink! hover:border-ink/40"
-    >
-      <h3 className="text-lg font-extrabold">{project.name}</h3>
-      <p className="mt-1 text-sm text-ink/70">
-        {project.services.length} service{project.services.length === 1 ? "" : "s"}
-      </p>
-      <ul className="mt-5 divide-y divide-divider">
-        {project.services.slice(0, 6).map((s) => (
-          <li key={s.id} className="flex items-center justify-between gap-3 py-2.5">
-            <span className="min-w-0 truncate font-medium">
-              {s.name} <span className="font-normal text-ink/60">· {kindLabel(s)}</span>
-            </span>
-            <StatusDot status={s.status} />
-          </li>
-        ))}
-        {project.services.length === 0 && <li className="py-2.5 text-sm text-ink/70">No services yet</li>}
-      </ul>
-    </Link>
+    <li className="border-b border-line last:border-b-0">
+      <Link
+        to={`/projects/${project.id}`}
+        className="grid gap-x-6 gap-y-2 px-5 py-4 no-underline hover:bg-subtle sm:grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(0,1fr)_17rem_9rem]"
+      >
+        <div className="min-w-0">
+          <p className="font-semibold">{project.name}</p>
+          <p className="mt-0.5 truncate text-sm text-muted">
+            {services.length === 0 ? "No services yet" : services.map((s) => s.name).join(", ")}
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3 self-center" aria-label={`${running} of ${services.length} running`}>
+          <span className="flex shrink-0 gap-1.5">
+            {services.map((s) => (
+              <span key={s.id} title={`${s.name}: ${s.status}`}>
+                <Dot status={s.status} className="size-2.5" />
+              </span>
+            ))}
+          </span>
+          <span className={cx("whitespace-nowrap text-sm", trouble ? "font-medium text-err" : "text-muted")}>
+            {trouble
+              ? `${trouble} need${trouble === 1 ? "s" : ""} attention`
+              : deploying
+                ? `${deploying} deploying`
+                : services.length === 0
+                  ? "Empty"
+                  : `${running} of ${services.length} running`}
+          </span>
+        </div>
+
+        <p className="self-center text-sm text-muted md:text-right">
+          {lastDeploy ? `Deployed ${timeAgo(lastDeploy)}` : "Never deployed"}
+        </p>
+      </Link>
+    </li>
   );
 }
 
@@ -98,17 +124,11 @@ function NewProject({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
     <Modal open={open} title="New project" onClose={onClose}>
       <form onSubmit={submit} className="space-y-5">
-        <Field label="Name" hint="Lowercase letters, digits and hyphens. It becomes part of each service's hostname.">
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value.toLowerCase())}
-            placeholder="my-shop"
-            autoFocus
-            required
-          />
+        <Field label="Name" hint="Lowercase letters, digits and hyphens. It becomes part of each service's address.">
+          <Input value={name} onChange={(e) => setName(e.target.value.toLowerCase())} placeholder="my-shop" autoFocus required />
         </Field>
         <ErrorText error={create.error} />
-        <div className="flex justify-end gap-3">
+        <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>

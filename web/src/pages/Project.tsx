@@ -18,8 +18,13 @@ export default function ProjectPage() {
     onSuccess: () => navigate("/projects"),
   });
 
-  if (project.isPending) return <Band>Loading…</Band>;
-  if (project.isError) return <Band><ErrorText error={project.error} /></Band>;
+  if (project.isPending) return <Band className="pt-10 text-muted">Loading…</Band>;
+  if (project.isError)
+    return (
+      <Band className="pt-10">
+        <ErrorText error={project.error} />
+      </Band>
+    );
   const p = project.data;
 
   return (
@@ -27,31 +32,43 @@ export default function ProjectPage() {
       <PageHeader
         eyebrow={<Link to="/projects">Projects</Link>}
         title={p.name}
-        lead={`${p.services.length} service${p.services.length === 1 ? "" : "s"} on the private network ${p.name}.`}
+        lead={`${p.services.length} service${p.services.length === 1 ? "" : "s"} on a private network. Services reach each other by name.`}
         actions={
           <>
-            <ButtonLink to={`/projects/${id}/new`}>Add service</ButtonLink>
             <ButtonLink to={`/templates?project=${id}`} variant="secondary">
               Add from template
             </ButtonLink>
-            <Button variant="danger" onClick={() => setDeleting(true)}>
-              Delete project
-            </Button>
+            <ButtonLink to={`/projects/${id}/new`}>Add service</ButtonLink>
           </>
         }
       />
-      <Band tone="soft">
+      <Band>
         {p.services.length === 0 ? (
           <EmptyState title="This project is empty" action={<ButtonLink to={`/projects/${id}/new`}>Add service</ButtonLink>}>
             Add an app from a Git repository, a Docker image, or a database.
           </EmptyState>
         ) : (
-          <div className="grid gap-8 md:grid-cols-2 xl:grid-cols-3">
-            {p.services.map((s) => (
-              <ServiceCard key={s.id} service={s} />
-            ))}
+          <div className="overflow-hidden rounded-panel border border-line bg-surface">
+            <div className="hidden grid-cols-[minmax(0,1.1fr)_8rem_minmax(0,1.2fr)_minmax(0,1.3fr)] gap-6 border-b border-line bg-subtle px-5 py-2.5 text-[13px] font-medium text-muted lg:grid">
+              <span>Service</span>
+              <span>Status</span>
+              <span>Address</span>
+              <span>Last deploy</span>
+            </div>
+            <ul>
+              {p.services.map((s) => (
+                <ServiceRow key={s.id} service={s} />
+              ))}
+            </ul>
           </div>
         )}
+
+        <div className="mt-12 flex flex-wrap items-center justify-between gap-4 border-t border-line pt-6">
+          <p className="text-sm text-muted">Deleting the project removes every service in it, including database data.</p>
+          <Button variant="danger" onClick={() => setDeleting(true)}>
+            Delete project
+          </Button>
+        </div>
       </Band>
       <ConfirmDelete
         open={deleting}
@@ -59,7 +76,7 @@ export default function ProjectPage() {
         what="project"
         consequence={
           <p>
-            Every service in <strong>{p.name}</strong> is removed, including database volumes. Backups
+            Every service in <strong className="text-fg">{p.name}</strong> is removed, including database volumes. Backups
             already uploaded are kept. This cannot be undone.
           </p>
         }
@@ -71,39 +88,43 @@ export default function ProjectPage() {
   );
 }
 
-function ServiceCard({ service: s }: { service: Service }) {
+function ServiceRow({ service: s }: { service: Service }) {
   const d = s.latest_deployment;
+  const address = s.url ? (
+    <a href={s.url} target="_blank" rel="noreferrer" className="font-mono text-[13px] break-all" onClick={(e) => e.stopPropagation()}>
+      {s.url.replace(/^https?:\/\//, "")}
+    </a>
+  ) : s.port ? (
+    <span className="font-mono text-[13px] text-muted">
+      {s.name}:{s.port}
+    </span>
+  ) : (
+    <span className="text-sm text-muted">Worker, no port</span>
+  );
+
   return (
-    <div className="flex flex-col rounded-md border border-hairline bg-canvas p-6">
-      <div className="flex items-start justify-between gap-3">
-        <Link to={`/services/${s.id}`} className="min-w-0 text-ink!">
-          <h3 className="truncate text-lg font-extrabold hover:underline">{s.name}</h3>
-        </Link>
-        <Badge>{kindLabel(s)}</Badge>
+    <li className="border-b border-line last:border-b-0">
+      <div className="relative grid gap-x-6 gap-y-2 px-5 py-4 hover:bg-subtle lg:grid-cols-[minmax(0,1.1fr)_8rem_minmax(0,1.2fr)_minmax(0,1.3fr)] lg:items-center">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <Link to={`/services/${s.id}`} className="truncate font-semibold no-underline after:absolute after:inset-0">
+            {s.name}
+          </Link>
+          <Badge>{kindLabel(s)}</Badge>
+        </div>
+        <StatusDot status={s.status} />
+        <div className="relative z-10 min-w-0">{address}</div>
+        <div className="min-w-0 text-sm">
+          {d ? (
+            <p className="flex min-w-0 items-baseline gap-2">
+              {d.commit_sha && <code className="shrink-0 text-[12px] text-muted">{d.commit_sha.slice(0, 7)}</code>}
+              <span className="truncate">{d.commit_message ?? `Deployed by ${d.trigger}`}</span>
+              <span className="ml-auto shrink-0 text-muted">{timeAgo(d.created_at)}</span>
+            </p>
+          ) : (
+            <span className="text-muted">Not deployed yet</span>
+          )}
+        </div>
       </div>
-      <StatusDot status={s.status} className="mt-3" />
-      <div className="mt-4 min-h-[44px] text-sm">
-        {s.url ? (
-          <a href={s.url} target="_blank" rel="noreferrer" className="break-all">
-            {s.url.replace(/^https?:\/\//, "")}
-          </a>
-        ) : s.kind === "database" ? (
-          <span className="text-ink/70">Private, reachable as {s.name} inside the project</span>
-        ) : (
-          <span className="text-ink/70">{s.port ? `Private on port ${s.port}` : "Worker, no port"}</span>
-        )}
-        {d && (
-          <p className="mt-1 truncate text-ink/70">
-            {d.commit_sha ? `${d.commit_sha.slice(0, 7)} ` : ""}
-            {d.commit_message ?? d.trigger} · {timeAgo(d.created_at)}
-          </p>
-        )}
-      </div>
-      <div className="mt-5">
-        <ButtonLink to={`/services/${s.id}`} variant="tertiary">
-          Open
-        </ButtonLink>
-      </div>
-    </div>
+    </li>
   );
 }
