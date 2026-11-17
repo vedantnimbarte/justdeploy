@@ -15,21 +15,20 @@ use crate::{
     state::SharedState,
 };
 use anyhow::{anyhow, bail, Context};
-use async_compression::tokio::{bufread::GzipDecoder, write::GzipEncoder};
+use async_compression::tokio::write::GzipEncoder;
 use bollard::{
     container::LogOutput,
     exec::{CreateExecOptions, StartExecResults},
 };
 use chrono::{DateTime, Utc};
-use futures::{StreamExt, TryStreamExt};
+use futures::StreamExt;
 use object_store::{
     aws::AmazonS3Builder, buffered::BufWriter, local::LocalFileSystem, path::Path, ObjectStore,
     ObjectStoreExt,
 };
 use serde::{Deserialize, Serialize};
 use std::{str::FromStr, sync::Arc, time::Duration};
-use tokio::io::{AsyncWriteExt, BufReader};
-use tokio_util::io::StreamReader;
+use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 // ---------------------------------------------------------------- destinations
@@ -145,10 +144,15 @@ pub async fn create_destination(
     config.validate()?;
     let (store, prefix) = open_store(state, &config)?;
     let probe = Path::from(format!("{prefix}.justdeploy-write-test").trim_start_matches('/'));
-    store
-        .put(&probe, "ok".into())
-        .await
-        .map_err(|e| bad_request(format!("cannot write to the destination: {e}")))?;
+    match tokio::time::timeout(Duration::from_secs(15), store.put(&probe, "ok".into())).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => return Err(bad_request(format!("cannot write to the destination: {e}"))),
+        Err(_) => {
+            return Err(bad_request(
+                "the destination did not answer within 15 seconds",
+            ))
+        }
+    }
     let _ = store.delete(&probe).await;
 
     let kind = match config {
@@ -613,7 +617,7 @@ pub async fn run_restore(state: &SharedState, backup_id: Uuid) -> Result<()> {
             let container = live_container(state, &service).await?;
             let command =
                 engines::restore_command(engine.id).ok_or_else(|| anyhow!("no restore command"))?;
-            pipe_into_exec(state, &container, command, store, &path).await
+            restore_into(state, &container, command, store, &path).await
         }
     }
     .await;
@@ -640,57 +644,74 @@ pub async fn run_restore(state: &SharedState, backup_id: Uuid) -> Result<()> {
     Ok(())
 }
 
-/// Streams a gzipped object, decompressed, into a command's stdin.
-async fn pipe_into_exec(
+const RESTORE_FILE: &str = "/tmp/jd-restore.gz";
+
+/// Copies a gzipped backup into a container, then runs `gzip -dc file | command`.
+///
+/// The file goes in through Docker's archive upload, a request of known length,
+/// rather than over an exec's stdin: ending stdin needs a half-close that the
+/// Windows named pipe (Docker Desktop) does not deliver, which leaves the restore
+/// command waiting forever. Every database image ships gzip.
+async fn restore_into(
     state: &SharedState,
     container: &str,
     command: &str,
     store: Arc<dyn ObjectStore>,
     path: &Path,
 ) -> anyhow::Result<()> {
+    let object = store.get(path).await?;
+    let size = object.meta.size;
+    let header = tar_header("jd-restore.gz", size)?;
+    let padding = (512 - (size % 512) as usize) % 512;
+    // A tar archive: header, the file, padding to a block, two empty blocks.
+    let body = futures::stream::once(async move { bytes::Bytes::copy_from_slice(&header) })
+        .chain(
+            object
+                .into_stream()
+                .take_while(|chunk| futures::future::ready(chunk.is_ok()))
+                .map(|chunk| chunk.unwrap_or_default()),
+        )
+        .chain(futures::stream::once(async move {
+            bytes::Bytes::from(vec![0u8; padding + 1024])
+        }));
+    let options = bollard::query_parameters::UploadToContainerOptionsBuilder::new()
+        .path("/tmp")
+        .build();
+    state
+        .docker
+        .upload_to_container(container, Some(options), bollard::body_stream(body))
+        .await
+        .context("copying the backup into the container")?;
+
+    let script = format!(
+        "gzip -dc {RESTORE_FILE} | {command}; status=$?; rm -f {RESTORE_FILE}; exit $status"
+    );
     let exec = state
         .docker
         .create_exec(
             container,
             CreateExecOptions {
-                attach_stdin: Some(true),
                 attach_stdout: Some(true),
                 attach_stderr: Some(true),
-                cmd: Some(vec!["sh", "-c", command]),
+                cmd: Some(vec!["sh", "-c", script.as_str()]),
                 ..Default::default()
             },
         )
         .await?;
-    let StartExecResults::Attached {
-        mut output,
-        mut input,
-    } = state.docker.start_exec(&exec.id, None).await?
+    let StartExecResults::Attached { mut output, .. } =
+        state.docker.start_exec(&exec.id, None).await?
     else {
         bail!("could not attach to the restore");
     };
-    let collect = tokio::spawn(async move {
-        let mut text = Vec::new();
+    let mut text = Vec::new();
+    let collect = async {
         while let Some(Ok(chunk)) = output.next().await {
             text.extend_from_slice(&docker::output_bytes(&chunk));
         }
-        text
-    });
-
-    let stream = store
-        .get(path)
-        .await?
-        .into_stream()
-        .map_err(std::io::Error::other);
-    let mut source = GzipDecoder::new(BufReader::new(StreamReader::new(stream)));
-    tokio::io::copy(&mut source, &mut input)
+    };
+    tokio::time::timeout(Duration::from_secs(60 * 60), collect)
         .await
-        .context("streaming the backup")?;
-    input.shutdown().await?;
-    drop(input);
-
-    let text = tokio::time::timeout(Duration::from_secs(60 * 60), collect)
-        .await
-        .context("the restore did not finish within an hour")??;
+        .context("the restore did not finish within an hour")?;
     let code = state
         .docker
         .inspect_exec(&exec.id)
@@ -704,6 +725,29 @@ async fn pipe_into_exec(
         );
     }
     Ok(())
+}
+
+/// A ustar header for one regular file.
+// ponytail: the octal size field tops out at 8 GiB compressed; use the GNU
+// base-256 size encoding if backups grow past that.
+fn tar_header(name: &str, size: u64) -> anyhow::Result<[u8; 512]> {
+    if size > 0o77777777777 {
+        bail!("backups over 8 GiB compressed cannot be restored this way yet");
+    }
+    let mut h = [0u8; 512];
+    h[..name.len()].copy_from_slice(name.as_bytes());
+    h[100..108].copy_from_slice(b"0000644\0");
+    h[108..116].copy_from_slice(b"0000000\0");
+    h[116..124].copy_from_slice(b"0000000\0");
+    h[124..136].copy_from_slice(format!("{size:011o}\0").as_bytes());
+    h[136..148].copy_from_slice(b"00000000000\0");
+    h[148..156].copy_from_slice(b"        ");
+    h[156] = b'0';
+    h[257..263].copy_from_slice(b"ustar\0");
+    h[263..265].copy_from_slice(b"00");
+    let sum: u32 = h.iter().map(|&b| b as u32).sum();
+    h[148..156].copy_from_slice(format!("{sum:06o}\0 ").as_bytes());
+    Ok(h)
 }
 
 /// Redis loads its data from dump.rdb at start, so: stop it, swap the file using
@@ -735,7 +779,7 @@ async fn restore_redis(
         host.binds = Some(vec![format!("{}:/data", volume.name)]);
     }
     let helper = docker::create_and_start(&state.docker, &helper_name, body).await?;
-    let result = pipe_into_exec(state, &helper, "cat > /data/dump.rdb", store, path).await;
+    let result = restore_into(state, &helper, "cat > /data/dump.rdb", store, path).await;
     docker::remove(&state.docker, &helper).await?;
     docker::start(&state.docker, &container).await?;
     result
@@ -744,6 +788,18 @@ async fn restore_redis(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tar_headers_carry_size_and_a_valid_checksum() {
+        let h = tar_header("jd-restore.gz", 1234).unwrap();
+        assert_eq!(&h[124..136], b"00000002322\0", "1234 in octal");
+        let mut blank = h;
+        blank[148..156].copy_from_slice(b"        ");
+        let sum: u32 = blank.iter().map(|&b| b as u32).sum();
+        let stored = std::str::from_utf8(&h[148..154]).unwrap();
+        assert_eq!(u32::from_str_radix(stored, 8).unwrap(), sum);
+        assert!(tar_header("x", 1 << 34).is_err());
+    }
 
     #[test]
     fn five_field_cron_is_accepted_and_others_are_not() {
