@@ -50,13 +50,20 @@ impl Release<'_> {
             labels.insert(LABEL_PR.to_string(), pr.to_string());
         }
         if let (true, Some(port)) = (self.routed(), service.port) {
+            let router = names::router(self.deployment.id);
             labels.extend(traefik_labels(
-                &names::router(service.id, pr),
+                &router,
                 self.hosts,
                 port,
                 self.proxy_network,
                 self.tls,
             ));
+            // The newest deployment wins as soon as Traefik sees it, so traffic
+            // moves over before the previous container is stopped.
+            labels.insert(
+                format!("traefik.http.routers.{router}.priority"),
+                self.deployment.created_at.timestamp().to_string(),
+            );
         }
 
         let mut env: Vec<String> = self.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
@@ -152,6 +159,20 @@ pub fn traefik_labels(
         (
             format!("traefik.http.routers.{router}.service"),
             router.to_string(),
+        ),
+        // Retries a request whose connection was refused on another container,
+        // which is what makes the switch between deployments seamless.
+        (
+            format!("traefik.http.middlewares.{router}-retry.retry.attempts"),
+            "3".to_string(),
+        ),
+        (
+            format!("traefik.http.middlewares.{router}-retry.retry.initialinterval"),
+            "100ms".to_string(),
+        ),
+        (
+            format!("traefik.http.routers.{router}.middlewares"),
+            format!("{router}-retry"),
         ),
         (
             format!("traefik.http.services.{router}.loadbalancer.server.port"),
@@ -293,10 +314,15 @@ mod tests {
         let hosts = vec!["api-shop.example.com".to_string()];
         let body = release(&s, &d, &hosts).body();
         let labels = body.labels.unwrap();
-        let router = names::router(s.id, None);
+        let router = names::router(d.id);
         assert_eq!(
             labels[&format!("traefik.http.routers.{router}.rule")],
             "Host(`api-shop.example.com`)"
+        );
+        assert_eq!(
+            labels[&format!("traefik.http.routers.{router}.priority")],
+            d.created_at.timestamp().to_string(),
+            "newer deployments must outrank older ones"
         );
         assert_eq!(
             labels[&format!("traefik.http.services.{router}.loadbalancer.server.port")],
@@ -324,16 +350,16 @@ mod tests {
     }
 
     #[test]
-    fn previews_get_their_own_router_and_no_alias() {
+    fn previews_route_only_their_own_host_and_get_no_alias() {
         let (s, d) = (service(), deployment(Some(4)));
         let hosts = vec!["pr-4-api-shop.example.com".to_string()];
         let body = release(&s, &d, &hosts).body();
         let labels = body.labels.unwrap();
         assert_eq!(labels[LABEL_PR], "4");
-        assert!(labels.contains_key(&format!(
-            "traefik.http.routers.{}.rule",
-            names::router(s.id, Some(4))
-        )));
+        assert_eq!(
+            labels[&format!("traefik.http.routers.{}.rule", names::router(d.id))],
+            "Host(`pr-4-api-shop.example.com`)"
+        );
         let endpoints = body.networking_config.unwrap().endpoints_config.unwrap();
         assert_eq!(endpoints["jd-proj-1"].aliases, None);
     }

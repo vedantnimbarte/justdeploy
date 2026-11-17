@@ -88,13 +88,11 @@ pub fn is_built_image(image: &str) -> bool {
     image.starts_with("jd-")
 }
 
-/// Traefik router and service name. Previews get their own so they never share
-/// a load balancer with production.
-pub fn router(service: Uuid, pr: Option<i32>) -> String {
-    match pr {
-        Some(pr) => format!("jd-{}-pr{pr}", service.simple()),
-        None => format!("jd-{}", service.simple()),
-    }
+/// Traefik router and service name, one per deployment. Two containers sharing a
+/// router with different labels (a domain added between deploys) would make
+/// Traefik drop the route, so each deployment brings its own.
+pub fn router(deployment: Uuid) -> String {
+    format!("jd-{}", deployment.simple())
 }
 
 #[cfg(test)]
@@ -137,7 +135,7 @@ mod tests {
             preview_host(7, "api", "shop", "example.com"),
             "pr-7-api-shop.example.com"
         );
-        assert_ne!(router(s, None), router(s, Some(1)));
+        assert_ne!(router(s), router(Uuid::max()));
         assert_eq!(
             volume(s, "/var/lib/postgresql/data"),
             "jd-00000000-var-lib-postgresql-data"

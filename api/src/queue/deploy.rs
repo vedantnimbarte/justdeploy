@@ -20,6 +20,8 @@ use uuid::Uuid;
 
 const BUILD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const KEEP_IMAGES: i64 = 5;
+/// Traefik batches Docker events for about two seconds before it reloads.
+const PROXY_SETTLE: Duration = Duration::from_secs(3);
 
 /// Deployment log writer. Lines are queued synchronously (so they can come from
 /// a stream callback) and written in order by one task.
@@ -345,6 +347,18 @@ async fn release(
         return Err(error);
     }
 
+    // Hand traffic over before removing anything: give Traefik time to add the
+    // new container, then stop the old one gracefully. Once it stops listening,
+    // Traefik's retry middleware sends refused requests to the new container.
+    if spec.routed() && !exclusive && !old.is_empty() {
+        tokio::time::sleep(PROXY_SETTLE).await;
+    }
+    for id in &old {
+        docker::stop(&state.docker, id).await?;
+    }
+    if spec.routed() && !exclusive && !old.is_empty() {
+        tokio::time::sleep(PROXY_SETTLE).await;
+    }
     for id in &old {
         docker::remove(&state.docker, id).await?;
     }
