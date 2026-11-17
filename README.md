@@ -623,11 +623,13 @@ docker compose up -d justdeploy      # dashboard at http://localhost:8080
 
 ### Design
 
-The dashboard follows a restrained, warm-neutral design system: sections are separated by tone rather
-than borders or shadows, the brand red appears only in the wordmark, every action is a warm charcoal
-button with a 4px radius, page headlines are set in Georgia above a 40×4px gold rule, and body text is
-Inter. The tokens are in [`web/src/styles.css`](web/src/styles.css). Status dots (forest, gold, red,
-grey) are the one deliberate use of colour on controls, always paired with a text label.
+The dashboard is deliberately quiet so that state stands out. Greys carry the structure, actions are
+solid ink like the logo, and colour only ever means status: green running, amber building, red failed,
+grey stopped, always paired with a word. The type is one family, Archivo, with page titles set wide
+through its width axis; JetBrains Mono appears only for machine data such as commit hashes, addresses
+and logs. A sidebar lists every project with a live status dot, so trouble shows from any page.
+Light and dark themes follow the system setting, with a switch in the sidebar; logs and the terminal
+stay dark in both. The tokens are in [`web/src/styles.css`](web/src/styles.css).
 
 ---
 
