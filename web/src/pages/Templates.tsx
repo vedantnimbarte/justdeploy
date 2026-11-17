@@ -2,6 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { api, kindLabel, type Project, type Template } from "../api";
+import { BrandIcon, templateIcons } from "../brandIcons";
 import { Badge, Band, Button, ErrorText, Field, Input, Modal, PageHeader, Select } from "../ui";
 
 const CATEGORIES: { id: Template["category"]; title: string; lead: string }[] = [
@@ -48,11 +49,16 @@ export default function TemplatesPage() {
                     onClick={() => setChosen(t)}
                     className="group flex flex-col rounded-panel border border-line bg-surface p-5 text-left hover:border-line-strong"
                   >
-                    <span className="flex items-baseline justify-between gap-3">
-                      <span className="font-semibold">{t.name}</span>
+                    <span className="flex items-start justify-between gap-3">
+                      <span className="flex gap-1.5">
+                        {templateIcons(t.id).map((icon) => (
+                          <BrandIcon key={icon.slug} icon={icon} />
+                        ))}
+                      </span>
                       <span className="text-sm font-medium text-muted group-hover:text-fg">Deploy</span>
                     </span>
-                    <span className="mt-1.5 flex-1 text-sm text-muted">{t.description}</span>
+                    <span className="mt-4 font-semibold">{t.name}</span>
+                    <span className="mt-1 flex-1 text-sm text-muted">{t.description}</span>
                     <span className="mt-4 flex flex-wrap gap-1.5">
                       {t.services.map((s) => (
                         <Badge key={s.name}>
