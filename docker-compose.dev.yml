@@ -1,0 +1,6 @@
+# Development: run Postgres and Traefik here, and the API with `cargo run`.
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres traefik
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5433:5432"

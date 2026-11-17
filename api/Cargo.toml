@@ -1,0 +1,42 @@
+[package]
+name = "justdeploy"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws"] }
+axum-extra = { version = "0.12", features = ["cookie"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "io-util"] }
+tokio-stream = "0.1"
+tokio-util = { version = "0.7", features = ["io"] }
+tower-http = { version = "0.6", features = ["trace", "fs"] }
+futures = "0.3"
+sqlx = { version = "0.9", default-features = false, features = [
+    "runtime-tokio", "postgres", "uuid", "chrono", "json", "macros", "migrate",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["serde", "v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dotenvy = "0.15"
+argon2 = "0.5"
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
+base64 = "0.22"
+rand = "0.8"
+aes-gcm = "0.10"
+bollard = "0.21"
+object_store = { version = "0.14", features = ["aws"] }
+async-compression = { version = "0.4", features = ["tokio", "gzip"] }
+cron = "0.17"
+bytes = "1"
+time = "0.3"
+
+[lints.clippy]
+unwrap_used = "warn"
