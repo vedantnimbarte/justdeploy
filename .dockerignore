@@ -1,0 +1,11 @@
+.git
+.github
+.claude
+**/target
+**/node_modules
+**/dist
+**/.env
+api/cookies.txt
+api/.backups
+examples
+builder

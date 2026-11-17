@@ -1,6 +1,30 @@
+# justdeploy on one server: the control plane, its Postgres, and Traefik.
+# deploy/install.sh writes the .env this file reads. For HTTPS, add
+# docker-compose.tls.yml (see the README).
 name: justdeploy
 
 services:
+  justdeploy:
+    image: ghcr.io/vedantnimbarte/justdeploy:${JD_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://justdeploy:${JD_DB_PASSWORD:-justdeploy}@postgres:5432/justdeploy
+      JD_MASTER_KEY: ${JD_MASTER_KEY:-}
+      JD_BASE_DOMAIN: ${JD_BASE_DOMAIN:-localhost}
+      JD_PUBLIC_URL: ${JD_PUBLIC_URL:-http://localhost:8080}
+      JD_ACME_EMAIL: ${JD_ACME_EMAIL:-}
+      JD_BUILDER_IMAGE: ${JD_BUILDER_IMAGE:-ghcr.io/vedantnimbarte/justdeploy-builder:latest}
+    ports:
+      - "${JD_PORT:-8080}:8080"
+    volumes:
+      # justdeploy runs containers on this host's Docker. Access to this socket is
+      # root on the host: keep the dashboard behind a strong password.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - backups:/backups
+
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
@@ -33,6 +57,7 @@ services:
 
 volumes:
   postgres:
+  backups:
 
 networks:
   proxy:

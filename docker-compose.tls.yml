@@ -1,0 +1,36 @@
+# HTTPS with Let's Encrypt. Use together with docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
+# Needs JD_ACME_EMAIL, DNS pointing at this server, and ports 80 and 443 open.
+# Set JD_DASHBOARD_DOMAIN to serve the dashboard itself over HTTPS.
+services:
+  traefik:
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=jd-proxy
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.le.acme.email=${JD_ACME_EMAIL}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+    ports:
+      - "443:443"
+    volumes:
+      - letsencrypt:/letsencrypt
+
+  justdeploy:
+    networks:
+      - default
+      - proxy
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: jd-proxy
+      traefik.http.routers.justdeploy.rule: Host(`${JD_DASHBOARD_DOMAIN:-dashboard.invalid}`)
+      traefik.http.routers.justdeploy.entrypoints: websecure
+      traefik.http.routers.justdeploy.tls.certresolver: le
+      traefik.http.services.justdeploy.loadbalancer.server.port: "8080"
+
+volumes:
+  letsencrypt:
