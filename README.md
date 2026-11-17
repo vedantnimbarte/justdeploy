@@ -16,8 +16,7 @@ Kubernetes.
 - **Push to deploy, pull request previews, one-click rollback.**
 - **Backups** of every database engine to S3-compatible storage or a local folder, on a schedule,
   with restore.
-- **Logs, metrics and a web terminal** for every service, and a **system overview** on the home
-  page: server CPU, memory, disk and network, all apps together, activity, Docker's disk usage,
+- **Logs, metrics and a web terminal** for every service, and an **Analytics** page: server CPU, memory, disk and network, all apps together, activity, Docker's disk usage,
   and warnings when something needs attention.
 - **Templates** for 18 stacks, from a static site to FastAPI + PostgreSQL.
 
@@ -366,7 +365,7 @@ both an S3-compatible store and a local folder.
 
 ## System overview
 
-The top of the Projects page shows the state of the whole server:
+The **Analytics** tab shows the state of the whole server:
 
 - **Server:** CPU (percent of all cores), memory in use (reclaimable cache excluded), disk used and
   free on the filesystem Docker stores its data on, network in and out, and uptime.
