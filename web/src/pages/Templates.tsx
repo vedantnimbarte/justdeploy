@@ -2,7 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { api, kindLabel, type Project, type Template } from "../api";
-import { Badge, Band, Button, ErrorText, Field, Input, Modal, PageHeader, SectionTitle, Select } from "../ui";
+import { Badge, Band, Button, ErrorText, Field, Input, Modal, PageHeader, Select } from "../ui";
 
 const CATEGORIES: { id: Template["category"]; title: string; lead: string }[] = [
   { id: "frontend", title: "Frontends", lead: "Static sites and single-page apps, and server-rendered React." },
@@ -22,44 +22,51 @@ export default function TemplatesPage() {
     <>
       <PageHeader
         title="Templates"
-        lead="Working examples to deploy in one click. Code templates build from this project's own repository, so open one up to see how it is put together."
+        lead="Working setups you can deploy in one click. Code templates build from justdeploy's own repository, so each is also an example to read."
       />
       {templates.isError && (
         <Band>
           <ErrorText error={templates.error} />
         </Band>
       )}
-      {CATEGORIES.map((category, i) => {
-        const items = templates.data?.filter((t) => t.category === category.id) ?? [];
-        if (items.length === 0) return null;
-        return (
-          <Band key={category.id} tone={i % 2 === 0 ? "soft" : "white"}>
-            <SectionTitle>{category.title}</SectionTitle>
-            <p className="-mt-2 mb-8 max-w-3xl">{category.lead}</p>
-            <div className="grid gap-8 md:grid-cols-2 xl:grid-cols-4">
-              {items.map((t) => (
-                <div
-                  key={t.id}
-                  className={`flex flex-col rounded-md p-6 ${i % 2 === 0 ? "border border-hairline bg-canvas" : "bg-canvas-warm"}`}
-                >
-                  <h3 className="text-lg font-extrabold">{t.name}</h3>
-                  <p className="mt-2 flex-1">{t.description}</p>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {t.services.map((s) => (
-                      <Badge key={s.name}>
-                        {s.name} · {kindLabel({ kind: s.kind, engine: s.engine ?? null, image: s.image ?? null })}
-                      </Badge>
-                    ))}
-                  </div>
-                  <div className="mt-6">
-                    <Button onClick={() => setChosen(t)}>Deploy</Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Band>
-        );
-      })}
+      <Band className="grid gap-12">
+        {CATEGORIES.map((category) => {
+          const items = templates.data?.filter((t) => t.category === category.id) ?? [];
+          if (items.length === 0) return null;
+          return (
+            <section key={category.id} aria-labelledby={`cat-${category.id}`}>
+              <div className="mb-4 border-b border-line pb-3">
+                <h2 id={`cat-${category.id}`} className="text-lg font-semibold">
+                  {category.title}
+                </h2>
+                <p className="mt-0.5 text-sm text-muted">{category.lead}</p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {items.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => setChosen(t)}
+                    className="group flex flex-col rounded-panel border border-line bg-surface p-5 text-left hover:border-line-strong"
+                  >
+                    <span className="flex items-baseline justify-between gap-3">
+                      <span className="font-semibold">{t.name}</span>
+                      <span className="text-sm font-medium text-muted group-hover:text-fg">Deploy</span>
+                    </span>
+                    <span className="mt-1.5 flex-1 text-sm text-muted">{t.description}</span>
+                    <span className="mt-4 flex flex-wrap gap-1.5">
+                      {t.services.map((s) => (
+                        <Badge key={s.name}>
+                          {s.name}: {kindLabel({ kind: s.kind, engine: s.engine ?? null, image: s.image ?? null })}
+                        </Badge>
+                      ))}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          );
+        })}
+      </Band>
       {chosen && <DeployTemplate template={chosen} projectId={intoProject} onClose={() => setChosen(null)} />}
     </>
   );

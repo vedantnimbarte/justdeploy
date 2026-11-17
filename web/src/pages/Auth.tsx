@@ -28,43 +28,35 @@ export default function AuthPage({ mode }: { mode: "setup" | "login" }) {
   };
 
   return (
-    <div className="flex min-h-screen flex-col bg-canvas-warm">
-      <header className="bg-canvas px-4 md:px-10">
-        <div className="mx-auto flex h-16 max-w-[1600px] items-center md:h-[72px]">
-          <Logo />
+    <div className="flex min-h-screen flex-col items-center px-5 py-12 sm:justify-center">
+      <Logo className="mb-10 h-7" />
+      <form onSubmit={submit} className="w-full max-w-sm rounded-panel border border-line bg-surface p-7">
+        <h1 className="title-wide text-2xl">{setup ? "Set up this server" : "Sign in"}</h1>
+        <p className="mt-2 text-sm text-muted">
+          {setup
+            ? "Create the admin account. There is only one; you can reset its password from the server's command line."
+            : "Use the admin account for this server."}
+        </p>
+        <div className="mt-7 space-y-4">
+          <Field label="Email">
+            <Input type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+          </Field>
+          <Field label="Password" hint={setup ? "At least 10 characters." : undefined}>
+            <Input
+              type="password"
+              autoComplete={setup ? "new-password" : "current-password"}
+              required
+              minLength={setup ? 10 : undefined}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </Field>
+          <ErrorText error={error} />
+          <Button type="submit" busy={busy} className="w-full">
+            {setup ? "Create admin account" : "Sign in"}
+          </Button>
         </div>
-      </header>
-      <main className="flex flex-1 items-start justify-center px-4 py-12 md:items-center">
-        <form onSubmit={submit} className="w-full max-w-md rounded-md border border-hairline bg-canvas p-6 md:p-8">
-          <h1 className="font-serif text-[32px] font-normal">{setup ? "Set up justdeploy" : "Sign in"}</h1>
-          <div className="mt-[18px] mb-6 h-1 w-10 bg-gold" aria-hidden />
-          {setup && (
-            <p className="mb-6">
-              Create the admin account for this server. There is only one; you can reset its password
-              from the command line if you lose it.
-            </p>
-          )}
-          <div className="space-y-5">
-            <Field label="Email">
-              <Input type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-            </Field>
-            <Field label="Password" hint={setup ? "At least 10 characters." : undefined}>
-              <Input
-                type="password"
-                autoComplete={setup ? "new-password" : "current-password"}
-                required
-                minLength={setup ? 10 : undefined}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </Field>
-            <ErrorText error={error} />
-            <Button type="submit" busy={busy} className="w-full">
-              {setup ? "Create admin account" : "Sign in"}
-            </Button>
-          </div>
-        </form>
-      </main>
+      </form>
     </div>
   );
 }

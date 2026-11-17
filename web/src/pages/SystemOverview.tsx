@@ -10,17 +10,17 @@ import { useState, type ReactElement, type ReactNode } from "react";
 import { Link } from "react-router";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, bytes, timeAgo } from "../api";
-import { SectionTitle } from "../ui";
+import { Segmented, SectionTitle } from "../ui";
 
-const SERVER = "#2a78d6";
-const APPS = "#eb6834";
-const NET_IN = "#1baf7a";
-const NET_OUT = "#6250d6";
-const GRID = "#e9e7e4";
-const MUTED = "#5f5a55";
-const TRACK = "#cde2fb";
-const WARN = "#c98500";
-const DANGER = "#d63b25";
+const SERVER = "var(--jd-series-1)";
+const APPS = "var(--jd-series-2)";
+const NET_IN = "var(--jd-series-3)";
+const NET_OUT = "var(--jd-series-4)";
+const GRID = "var(--jd-line)";
+const MUTED = "var(--jd-muted)";
+const TRACK = "var(--jd-track)";
+const WARN = "var(--jd-warn)";
+const DANGER = "var(--jd-err)";
 
 interface Server {
   sampled_at: string;
@@ -106,21 +106,15 @@ export default function SystemOverview() {
   const data = overview.data;
 
   return (
-    <div className="grid gap-8">
+    <div className="grid gap-5">
       <SectionTitle
         action={
-          <div className="flex gap-1 rounded-sm bg-canvas-tint p-1" role="group" aria-label="Chart range">
-            {RANGES.map((r) => (
-              <button
-                key={r.minutes}
-                onClick={() => setMinutes(r.minutes)}
-                aria-pressed={minutes === r.minutes}
-                className={`rounded-xs px-3 py-1.5 text-sm font-medium ${minutes === r.minutes ? "bg-canvas border border-hairline" : "text-ink/70 hover:text-ink"}`}
-              >
-                {r.label}
-              </button>
-            ))}
-          </div>
+          <Segmented
+            label="Chart range"
+            value={minutes}
+            onChange={setMinutes}
+            options={RANGES.map((r) => ({ value: r.minutes, label: r.label }))}
+          />
         }
       >
         Server
@@ -131,7 +125,7 @@ export default function SystemOverview() {
       {!data ? (
         <p>Loading…</p>
       ) : !data.server ? (
-        <p className="rounded-md bg-canvas-soft p-6">
+        <p className="rounded-panel bg-subtle p-6">
           Collecting the first server samples. Figures appear within a minute.
         </p>
       ) : (
@@ -156,11 +150,11 @@ export default function SystemOverview() {
 
 function Warnings({ warnings }: { warnings: Overview["warnings"] }) {
   return (
-    <ul className="divide-y divide-divider rounded-md border border-hairline bg-canvas" aria-label="Needs attention">
+    <ul className="divide-y divide-line rounded-panel border border-line bg-surface" aria-label="Needs attention">
       {warnings.map((w, i) => (
         <li key={i} className="flex items-start gap-3 px-5 py-3">
           <span
-            className="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full text-xs font-extrabold text-white"
+            className="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white"
             style={{ background: w.level === "critical" ? DANGER : WARN }}
             aria-hidden
           >
@@ -185,11 +179,11 @@ function Warnings({ warnings }: { warnings: Overview["warnings"] }) {
 
 function Tile({ label, value, sub, meter }: { label: string; value: ReactNode; sub?: ReactNode; meter?: number }) {
   return (
-    <div className="rounded-md bg-canvas-warm p-5">
-      <p className="text-sm">{label}</p>
-      <p className="mt-1 text-2xl font-semibold">{value}</p>
+    <div className="rounded-panel border border-line bg-surface p-4">
+      <p className="text-sm text-muted">{label}</p>
+      <p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p>
       {meter !== undefined && <Meter percent={meter} />}
-      {sub && <p className="mt-2 text-sm text-ink/70">{sub}</p>}
+      {sub && <p className="mt-2 text-sm text-muted">{sub}</p>}
     </div>
   );
 }
@@ -222,7 +216,7 @@ function ServerTiles({ server: s }: { server: Server }) {
       <Tile
         label="Network"
         value={`${bytes(s.net_rx_rate + s.net_tx_rate)}/s`}
-        sub={`${bytes(s.net_rx_rate)}/s in · ${bytes(s.net_tx_rate)}/s out`}
+        sub={`${bytes(s.net_rx_rate)}/s in, ${bytes(s.net_tx_rate)}/s out`}
       />
       <Tile label="Uptime" value={uptime(s.uptime_seconds)} sub={`Sampled ${timeAgo(s.sampled_at)}`} />
     </div>
@@ -253,7 +247,7 @@ function ChartTooltip({
 }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-md border border-hairline bg-canvas px-3 py-2 text-sm">
+    <div className="rounded-panel border border-line bg-surface px-3 py-2 text-sm">
       <p className="mb-1 font-semibold">{time(String(label))}</p>
       {series.map((s) => {
         const item = payload.find((p) => p.dataKey === s.key);
@@ -300,9 +294,9 @@ function ChartCard({
         <g />
       );
   return (
-    <div className="rounded-md border border-hairline bg-canvas p-5">
+    <div className="rounded-panel border border-line bg-surface p-5">
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="text-lg font-extrabold">{title}</h3>
+        <h3 className="text-lg font-semibold">{title}</h3>
         <div className="flex gap-4 text-sm" aria-label="Legend">
           {series.map((s) => (
             <span key={s.name} className="inline-flex items-center gap-1.5">
@@ -347,7 +341,7 @@ function ChartCard({
                 stroke={s.color}
                 strokeWidth={2}
                 dot={false}
-                activeDot={{ r: 4, stroke: "#ffffff", strokeWidth: 2 }}
+                activeDot={{ r: 4, stroke: "var(--jd-surface)", strokeWidth: 2 }}
                 isAnimationActive={false}
                 connectNulls
                 label={endLabel(s)}
@@ -362,7 +356,7 @@ function ChartCard({
 
 function Charts({ series, server }: { series: Point[]; server: Server }) {
   if (series.length < 2) {
-    return <p className="rounded-md bg-canvas-soft p-6">Charts fill in as samples arrive, one every 30 seconds.</p>;
+    return <p className="rounded-panel bg-subtle p-6">Charts fill in as samples arrive, one every 30 seconds.</p>;
   }
   return (
     <div className="grid gap-8 xl:grid-cols-3">
@@ -403,8 +397,8 @@ function Charts({ series, server }: { series: Point[]; server: Server }) {
 
 function Panel({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="rounded-md border border-hairline bg-canvas p-5">
-      <h3 className="mb-4 text-lg font-extrabold">{title}</h3>
+    <div className="rounded-panel border border-line bg-surface p-5">
+      <h3 className="mb-4 text-lg font-semibold">{title}</h3>
       {children}
     </div>
   );
@@ -418,8 +412,9 @@ function Platform({ platform: p }: { platform: Overview["platform"] }) {
     p.stopped && `${p.stopped} stopped`,
   ].filter(Boolean);
   return (
-    <Panel title="Activity">
-      <div className="grid grid-cols-2 gap-4">
+    <section>
+      <h3 className="mb-4 text-lg font-semibold">Activity</h3>
+      <div className="grid grid-cols-2 gap-3">
         <Tile
           label="Services running"
           value={`${p.running} of ${p.services}`}
@@ -439,12 +434,12 @@ function Platform({ platform: p }: { platform: Overview["platform"] }) {
           value={p.last_backup ? timeAgo(p.last_backup.created_at) : "None"}
           sub={
             p.last_backup
-              ? `${p.last_backup.service}, ${p.last_backup.status}${p.failed_backups_24h ? ` · ${p.failed_backups_24h} failed in 24h` : ""}`
+              ? `${p.last_backup.service}, ${p.last_backup.status}${p.failed_backups_24h ? `, ${p.failed_backups_24h} failed in 24h` : ""}`
               : "No backups yet"
           }
         />
       </div>
-    </Panel>
+    </section>
   );
 }
 
@@ -467,19 +462,19 @@ function DockerDisk({ disk }: { disk: Overview["docker_disk"] }) {
   const reclaimable = rows.reduce((sum, r) => sum + r.reclaimable, 0);
   return (
     <Panel title="Docker disk usage">
-      <p className="mb-4 text-sm text-ink/70">
-        {bytes(total)} in total, {bytes(reclaimable)} reclaimable · measured {timeAgo(disk.sampled_at)}
+      <p className="mb-4 text-sm text-muted">
+        {bytes(total)} in total, of which {bytes(reclaimable)} can be reclaimed. Measured {timeAgo(disk.sampled_at)}.
       </p>
       <ul className="grid gap-4">
         {rows.map((r) => (
           <li key={r.name}>
             <div className="flex items-baseline justify-between gap-3 text-sm">
               <span className="font-semibold">
-                {r.name} <span className="font-normal text-ink/70">({r.count})</span>
+                {r.name} <span className="font-normal text-muted">({r.count})</span>
               </span>
               <span>
                 {bytes(r.size)}
-                <span className="text-ink/70"> · {bytes(r.reclaimable)} reclaimable</span>
+                <span className="text-muted">, {bytes(r.reclaimable)} reclaimable</span>
               </span>
             </div>
             <div className="mt-1.5 h-2 rounded-full" style={{ background: TRACK }} title={`${r.name}: ${bytes(r.size)}`}>
@@ -504,7 +499,7 @@ function TopServices({ services }: { services: Overview["top_services"] }) {
         <p>No running services yet.</p>
       ) : (
         <table className="w-full text-left text-sm">
-          <thead className="bg-canvas-tint text-xs">
+          <thead className="bg-subtle text-xs">
             <tr>
               <th className="px-3 py-2 font-semibold">Service</th>
               <th className="px-3 py-2 text-right font-semibold">CPU</th>
@@ -513,12 +508,12 @@ function TopServices({ services }: { services: Overview["top_services"] }) {
           </thead>
           <tbody>
             {services.map((s) => (
-              <tr key={s.id} className="border-b border-hairline last:border-b-0">
+              <tr key={s.id} className="border-b border-line last:border-b-0">
                 <td className="px-3 py-2.5">
                   <Link to={`/services/${s.id}?tab=metrics`} className="font-medium">
                     {s.name}
                   </Link>
-                  <span className="text-ink/70"> · {s.project}</span>
+                  <span className="text-muted"> in {s.project}</span>
                 </td>
                 <td className="px-3 py-2.5 text-right tabular-nums">{s.cpu_percent.toFixed(1)}%</td>
                 <td className="px-3 py-2.5 text-right tabular-nums">{bytes(s.memory_bytes)}</td>

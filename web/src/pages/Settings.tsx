@@ -8,13 +8,13 @@ export default function SettingsPage() {
   return (
     <>
       <PageHeader title="Settings" lead="Domains, TLS, backups and your account." />
-      <Band tone="soft" className="grid max-w-4xl gap-8">
+      <Band className="grid max-w-4xl gap-6">
         {settings.data && <DomainSettings settings={settings.data} />}
         <Destinations />
         <PasswordForm />
         {settings.data && (
-          <p className="text-sm text-ink/70">
-            justdeploy {settings.data.version} · webhooks reach this server at {settings.data.public_url}
+          <p className="text-sm text-muted">
+            justdeploy {settings.data.version}. Webhooks reach this server at {settings.data.public_url}.
           </p>
         )}
       </Band>
@@ -53,7 +53,7 @@ function DomainSettings({ settings }: { settings: Settings }) {
         >
           <Input value={domain} onChange={(e) => setDomain(e.target.value.toLowerCase())} required />
         </Field>
-        <div className="rounded-sm bg-canvas-soft p-4">
+        <div className="rounded-control bg-subtle p-4">
           {settings.tls ? (
             <p>
               <strong>TLS is on.</strong> Traefik gets Let's Encrypt certificates for every hostname, registered to{" "}
@@ -131,16 +131,16 @@ function Destinations() {
     <Card>
       <SectionTitle>Backup destinations</SectionTitle>
       {destinations.data?.length ? (
-        <ul className="mb-6 divide-y divide-divider rounded-md border border-hairline">
+        <ul className="mb-6 divide-y divide-line rounded-panel border border-line">
           {destinations.data.map((d) => (
             <li key={d.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
               <div className="min-w-0">
                 <p className="font-semibold">{d.name}</p>
-                <p className="truncate text-sm text-ink/70">
-                  {d.summary} · added {timeAgo(d.created_at)}
+                <p className="truncate text-sm text-muted">
+                  {d.summary}, added {timeAgo(d.created_at)}
                 </p>
               </div>
-              <Button variant="tertiary" className="!py-2" onClick={() => remove.mutate(d.id)}>
+              <Button variant="tertiary" className="h-8" onClick={() => remove.mutate(d.id)}>
                 Remove
               </Button>
             </li>
@@ -149,8 +149,8 @@ function Destinations() {
       ) : (
         <p className="mb-6">None yet. Add one, then schedule backups on any database's Backups tab.</p>
       )}
-      <form onSubmit={submit} className="grid gap-5 border-t border-divider pt-6">
-        <h3 className="text-lg font-extrabold">Add a destination</h3>
+      <form onSubmit={submit} className="grid gap-5 border-t border-line pt-6">
+        <h3 className="text-lg font-semibold">Add a destination</h3>
         <div className="grid gap-5 md:grid-cols-2">
           <Field label="Name">
             <Input value={form.name} onChange={(e) => set("name")(e.target.value)} placeholder="offsite" required />
