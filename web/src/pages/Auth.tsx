@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { api } from "../api";
+import { Logo } from "../Layout";
 import { Button, ErrorText, Field, Input } from "../ui";
 
 /** First-run setup (creates the single admin) and sign-in share one screen. */
@@ -30,7 +31,7 @@ export default function AuthPage({ mode }: { mode: "setup" | "login" }) {
     <div className="flex min-h-screen flex-col bg-canvas-warm">
       <header className="bg-canvas px-4 md:px-10">
         <div className="mx-auto flex h-16 max-w-[1600px] items-center md:h-[72px]">
-          <span className="text-2xl font-extrabold text-brand">justdeploy</span>
+          <Logo />
         </div>
       </header>
       <main className="flex flex-1 items-start justify-center px-4 py-12 md:items-center">

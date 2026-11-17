@@ -1,3 +1,5 @@
+<img src="web/public/logo.svg" alt="" width="72">
+
 # justdeploy
 
 A self-hosted platform for deploying apps, backends and databases on one server with plain Docker.

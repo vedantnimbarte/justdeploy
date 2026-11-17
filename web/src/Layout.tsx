@@ -8,11 +8,20 @@ const NAV = [
   { to: "/settings", label: "Settings" },
 ];
 
-/** The wordmark is the only place the brand red appears. */
-export function Wordmark() {
+/** The mark in ink, then the wordmark: the only place the brand red appears. */
+export function Logo() {
   return (
-    <Link to="/projects" className="text-2xl font-extrabold text-brand!" aria-label="justdeploy home">
+    <span className="inline-flex items-center gap-2.5 text-2xl font-extrabold text-brand">
+      <img src="/logo.svg" alt="" width={36} height={36} className="size-9" />
       justdeploy
+    </span>
+  );
+}
+
+function Wordmark() {
+  return (
+    <Link to="/projects" aria-label="justdeploy home">
+      <Logo />
     </Link>
   );
 }
