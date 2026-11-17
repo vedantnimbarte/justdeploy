@@ -16,7 +16,9 @@ Kubernetes.
 - **Push to deploy, pull request previews, one-click rollback.**
 - **Backups** of every database engine to S3-compatible storage or a local folder, on a schedule,
   with restore.
-- **Logs, metrics and a web terminal** for every service.
+- **Logs, metrics and a web terminal** for every service, and a **system overview** on the home
+  page: server CPU, memory, disk and network, all apps together, activity, Docker's disk usage,
+  and warnings when something needs attention.
 - **Templates** for 18 stacks, from a static site to FastAPI + PostgreSQL.
 
 justdeploy is MIT licensed and has a single admin account: it is meant for you and your team on your
@@ -38,6 +40,7 @@ own server, not for hosting strangers.
 - [Databases](#databases)
 - [Backups and restore](#backups-and-restore)
 - [Logs, metrics and the terminal](#logs-metrics-and-the-terminal)
+- [System overview](#system-overview)
 - [Templates](#templates)
 - [Configuration reference](#configuration-reference)
 - [HTTP API](#http-api)
@@ -361,6 +364,27 @@ both an S3-compatible store and a local folder.
 
 ---
 
+## System overview
+
+The top of the Projects page shows the state of the whole server:
+
+- **Server:** CPU (percent of all cores), memory in use (reclaimable cache excluded), disk used and
+  free on the filesystem Docker stores its data on, network in and out, and uptime.
+- **Charts** over the last hour, 6 hours or 24 hours: the server's CPU and memory next to the same
+  figures for all your services added together, and the server's network traffic.
+- **Activity:** services running out of the total (with any crashed, failed, deploying or stopped),
+  deploys today and how many failed, the build success rate over 7 days, and the last backup.
+- **Docker disk usage:** space taken by images, build cache, volumes and containers, and how much of
+  each is reclaimable. It is measured every ten minutes, because sizing every volume can take a while.
+- **Heaviest services** by memory, with their CPU.
+- **Warnings** when the disk is over 85% full (critical over 95%), memory is over 90% used, a service
+  has crashed, or a backup failed in the last 24 hours. Each links to the place to look.
+
+Server figures come from a small idle container named `jd-agent` (the builder image, on the host
+network), which justdeploy reads `/proc` and `df` through every 30 seconds. justdeploy itself runs in
+a container and could not see the server's network or disk otherwise. Samples are kept for 24 hours.
+On Docker Desktop the figures describe Docker's virtual machine rather than your computer.
+
 ## Templates
 
 | Category | Template | Services |
@@ -459,6 +483,7 @@ authenticate by signature instead.
 | Method | Path | |
 |---|---|---|
 | `GET` | `/health` | Database and Docker reachability |
+| `GET` | `/overview?minutes=60` | Server, apps-combined series, activity, Docker disk usage, warnings |
 | `GET` | `/auth/status` | Whether setup is needed and whether signed in |
 | `POST` | `/auth/setup` · `/auth/login` · `/auth/logout` | `{email, password}` |
 | `PUT` | `/auth/password` | `{current, new}` |
