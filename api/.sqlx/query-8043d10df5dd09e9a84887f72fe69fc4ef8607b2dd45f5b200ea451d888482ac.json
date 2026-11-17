@@ -1,0 +1,74 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT DISTINCT ON (m.service_id) m.service_id, s.name, p.name AS project,\n               m.cpu_percent, m.memory_bytes\n        FROM metric_samples m\n        JOIN services s ON s.id = m.service_id\n        JOIN projects p ON p.id = s.project_id\n        WHERE m.ts > now() - interval '2 minutes'\n        ORDER BY m.service_id, m.ts DESC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "service_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "metric_samples",
+            "name": "service_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "project",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "cpu_percent",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "metric_samples",
+            "name": "cpu_percent"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "memory_bytes",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "metric_samples",
+            "name": "memory_bytes"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "8043d10df5dd09e9a84887f72fe69fc4ef8607b2dd45f5b200ea451d888482ac"
+}

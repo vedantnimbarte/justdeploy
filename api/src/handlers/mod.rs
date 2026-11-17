@@ -1,5 +1,6 @@
 mod admin;
 mod auth;
+mod overview;
 mod projects;
 mod streams;
 
@@ -22,6 +23,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/auth/logout", post(auth::logout))
         .route("/auth/me", get(auth::me))
         .route("/auth/password", put(admin::change_password))
+        .route("/overview", get(overview::overview))
         // projects and services
         .route("/projects", get(projects::list).post(projects::create))
         .route(

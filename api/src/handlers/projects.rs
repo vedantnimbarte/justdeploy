@@ -36,7 +36,10 @@ pub struct ProjectView {
     services: Vec<ServiceView>,
 }
 
-async fn latest_deployment(state: &SharedState, service_id: Uuid) -> Result<Option<Deployment>> {
+pub(super) async fn latest_deployment(
+    state: &SharedState,
+    service_id: Uuid,
+) -> Result<Option<Deployment>> {
     Ok(sqlx::query_as!(
         Deployment,
         "SELECT * FROM deployments WHERE service_id = $1 AND kind = 'production'
@@ -47,7 +50,7 @@ async fn latest_deployment(state: &SharedState, service_id: Uuid) -> Result<Opti
     .await?)
 }
 
-fn status(
+pub(super) fn status(
     service: &Service,
     latest: Option<&Deployment>,
     containers: &[&ContainerSummary],

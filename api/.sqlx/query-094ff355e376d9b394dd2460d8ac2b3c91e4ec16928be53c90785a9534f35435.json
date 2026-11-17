@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT count(*) FILTER (WHERE status IN ('running', 'superseded', 'removed')) AS \"ok!\",\n                  count(*) FILTER (WHERE status = 'failed') AS \"failed!\"\n           FROM deployments\n           WHERE created_at > now() - interval '7 days' AND finished_at IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ok!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "failed!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "094ff355e376d9b394dd2460d8ac2b3c91e4ec16928be53c90785a9534f35435"
+}
