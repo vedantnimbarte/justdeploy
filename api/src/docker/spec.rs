@@ -144,19 +144,34 @@ pub fn traefik_labels(
         .join(" || ");
     let mut labels = HashMap::from([
         ("traefik.enable".to_string(), "true".to_string()),
-        ("traefik.docker.network".to_string(), proxy_network.to_string()),
+        (
+            "traefik.docker.network".to_string(),
+            proxy_network.to_string(),
+        ),
         (format!("traefik.http.routers.{router}.rule"), rule),
-        (format!("traefik.http.routers.{router}.service"), router.to_string()),
+        (
+            format!("traefik.http.routers.{router}.service"),
+            router.to_string(),
+        ),
         (
             format!("traefik.http.services.{router}.loadbalancer.server.port"),
             port.to_string(),
         ),
     ]);
     if tls {
-        labels.insert(format!("traefik.http.routers.{router}.entrypoints"), "websecure".into());
-        labels.insert(format!("traefik.http.routers.{router}.tls.certresolver"), "le".into());
+        labels.insert(
+            format!("traefik.http.routers.{router}.entrypoints"),
+            "websecure".into(),
+        );
+        labels.insert(
+            format!("traefik.http.routers.{router}.tls.certresolver"),
+            "le".into(),
+        );
     } else {
-        labels.insert(format!("traefik.http.routers.{router}.entrypoints"), "web".into());
+        labels.insert(
+            format!("traefik.http.routers.{router}.entrypoints"),
+            "web".into(),
+        );
     }
     labels
 }
@@ -174,14 +189,21 @@ pub fn bounded_logs() -> HostConfigLogConfig {
 
 /// A short-lived container from the builder image. The Docker socket is mounted
 /// only when it has to build.
-pub fn helper(image: &str, cmd: &[&str], env: Vec<String>, network: Option<&str>, docker_socket: bool) -> ContainerCreateBody {
+pub fn helper(
+    image: &str,
+    cmd: &[&str],
+    env: Vec<String>,
+    network: Option<&str>,
+    docker_socket: bool,
+) -> ContainerCreateBody {
     ContainerCreateBody {
         image: Some(image.to_string()),
         cmd: Some(cmd.iter().map(|s| s.to_string()).collect()),
         env: Some(env),
         labels: Some(HashMap::from([(MANAGED.to_string(), "helper".to_string())])),
         host_config: Some(HostConfig {
-            binds: docker_socket.then(|| vec!["/var/run/docker.sock:/var/run/docker.sock".to_string()]),
+            binds: docker_socket
+                .then(|| vec!["/var/run/docker.sock:/var/run/docker.sock".to_string()]),
             network_mode: network.map(str::to_string),
             log_config: Some(bounded_logs()),
             ..Default::default()
@@ -229,7 +251,12 @@ mod tests {
         Deployment {
             id: Uuid::nil(),
             service_id: Uuid::nil(),
-            kind: if pr.is_some() { "preview" } else { "production" }.into(),
+            kind: if pr.is_some() {
+                "preview"
+            } else {
+                "production"
+            }
+            .into(),
             pr_number: pr,
             repo_url: None,
             branch: None,
@@ -281,7 +308,10 @@ mod tests {
         assert_eq!(host.memory, Some(256 * 1024 * 1024));
         let endpoints = body.networking_config.unwrap().endpoints_config.unwrap();
         assert!(endpoints.contains_key("jd-proxy"));
-        assert_eq!(endpoints["jd-proj-1"].aliases, Some(vec!["api".to_string()]));
+        assert_eq!(
+            endpoints["jd-proj-1"].aliases,
+            Some(vec!["api".to_string()])
+        );
     }
 
     #[test]

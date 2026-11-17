@@ -52,7 +52,11 @@ pub struct SettingsUpdate {
 }
 
 /// Changing the base domain re-releases every public service onto the new hostnames.
-pub async fn put_settings(_: Admin, State(state): State<SharedState>, Json(body): Json<SettingsUpdate>) -> Result<StatusCode> {
+pub async fn put_settings(
+    _: Admin,
+    State(state): State<SharedState>,
+    Json(body): Json<SettingsUpdate>,
+) -> Result<StatusCode> {
     let domain = body.base_domain.trim().to_lowercase();
     if domain == services::base_domain(&state).await? {
         return Ok(StatusCode::NO_CONTENT);
@@ -74,7 +78,11 @@ pub struct PasswordChange {
     new: String,
 }
 
-pub async fn change_password(_: Admin, State(state): State<SharedState>, Json(body): Json<PasswordChange>) -> Result<StatusCode> {
+pub async fn change_password(
+    _: Admin,
+    State(state): State<SharedState>,
+    Json(body): Json<PasswordChange>,
+) -> Result<StatusCode> {
     if !auth::check_password(&state, &body.current).await? {
         return Err(bad_request("the current password is wrong"));
     }
@@ -96,12 +104,18 @@ pub async fn deploy_template(
     Json(body): Json<DeployTemplate>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let project = templates::deploy(&state, &id, body).await?;
-    Ok((StatusCode::CREATED, Json(json!({ "project_id": project.id }))))
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({ "project_id": project.id })),
+    ))
 }
 
 // ---------------------------------------------------------------- backups
 
-pub async fn list_destinations(_: Admin, State(state): State<SharedState>) -> Result<Json<Vec<backups::Destination>>> {
+pub async fn list_destinations(
+    _: Admin,
+    State(state): State<SharedState>,
+) -> Result<Json<Vec<backups::Destination>>> {
     Ok(Json(backups::list_destinations(&state).await?))
 }
 
@@ -121,12 +135,20 @@ pub async fn create_destination(
     Ok((StatusCode::CREATED, Json(json!({ "id": id }))))
 }
 
-pub async fn delete_destination(_: Admin, State(state): State<SharedState>, Path(id): Path<Uuid>) -> Result<StatusCode> {
+pub async fn delete_destination(
+    _: Admin,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
     backups::delete_destination(&state, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub async fn list_backups(_: Admin, State(state): State<SharedState>, Path(id): Path<Uuid>) -> Result<Json<Vec<backups::Backup>>> {
+pub async fn list_backups(
+    _: Admin,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<backups::Backup>>> {
     Ok(Json(backups::list(&state, id).await?))
 }
 
@@ -146,12 +168,20 @@ pub async fn backup_now(
     Ok((StatusCode::ACCEPTED, Json(json!({ "id": backup }))))
 }
 
-pub async fn restore(_: Admin, State(state): State<SharedState>, Path(id): Path<Uuid>) -> Result<StatusCode> {
+pub async fn restore(
+    _: Admin,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
     backups::start_restore(&state, id).await?;
     Ok(StatusCode::ACCEPTED)
 }
 
-pub async fn get_schedule(_: Admin, State(state): State<SharedState>, Path(id): Path<Uuid>) -> Result<Json<Option<Schedule>>> {
+pub async fn get_schedule(
+    _: Admin,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Option<Schedule>>> {
     Ok(Json(backups::get_schedule(&state, id).await?))
 }
 
@@ -169,7 +199,10 @@ pub async fn put_schedule(
 // ---------------------------------------------------------------- webhooks (no session)
 
 fn header<'a>(headers: &'a HeaderMap, name: &str) -> &'a str {
-    headers.get(name).and_then(|v| v.to_str().ok()).unwrap_or_default()
+    headers
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
 }
 
 fn parse<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T> {
@@ -183,7 +216,11 @@ pub async fn github(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let service = services::get_service(&state.db, id).await?;
-    if !webhooks::verify_github(&service.webhook_secret, header(&headers, "x-hub-signature-256"), &body) {
+    if !webhooks::verify_github(
+        &service.webhook_secret,
+        header(&headers, "x-hub-signature-256"),
+        &body,
+    ) {
         return Err(webhooks::forbidden());
     }
     let message = match header(&headers, "x-github-event") {

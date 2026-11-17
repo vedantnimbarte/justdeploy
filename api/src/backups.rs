@@ -72,9 +72,20 @@ pub struct Destination {
 impl DestinationConfig {
     fn summary(&self) -> String {
         match self {
-            Self::S3 { endpoint, bucket, prefix, .. } => {
-                let host = if endpoint.is_empty() { "s3.amazonaws.com" } else { endpoint };
-                format!("{host}/{bucket}/{prefix}").trim_end_matches('/').to_string()
+            Self::S3 {
+                endpoint,
+                bucket,
+                prefix,
+                ..
+            } => {
+                let host = if endpoint.is_empty() {
+                    "s3.amazonaws.com"
+                } else {
+                    endpoint
+                };
+                format!("{host}/{bucket}/{prefix}")
+                    .trim_end_matches('/')
+                    .to_string()
             }
             Self::Local { path } => format!("local: {path}"),
         }
@@ -82,7 +93,12 @@ impl DestinationConfig {
 
     fn validate(&self) -> Result<()> {
         match self {
-            Self::S3 { bucket, access_key_id, secret_access_key, .. } => {
+            Self::S3 {
+                bucket,
+                access_key_id,
+                secret_access_key,
+                ..
+            } => {
                 if bucket.is_empty() || access_key_id.is_empty() || secret_access_key.is_empty() {
                     return Err(bad_request("bucket, access key and secret are required"));
                 }
@@ -104,7 +120,8 @@ pub async fn list_destinations(state: &SharedState) -> Result<Vec<Destination>> 
     rows.into_iter()
         .map(|r| {
             let config: DestinationConfig =
-                serde_json::from_str(&state.cipher.decrypt(&r.config_enc)?).map_err(anyhow::Error::from)?;
+                serde_json::from_str(&state.cipher.decrypt(&r.config_enc)?)
+                    .map_err(anyhow::Error::from)?;
             Ok(Destination {
                 id: r.id,
                 name: r.name,
@@ -117,7 +134,11 @@ pub async fn list_destinations(state: &SharedState) -> Result<Vec<Destination>> 
 }
 
 /// Saves a destination after proving it can be written to.
-pub async fn create_destination(state: &SharedState, name: &str, config: DestinationConfig) -> Result<Uuid> {
+pub async fn create_destination(
+    state: &SharedState,
+    name: &str,
+    config: DestinationConfig,
+) -> Result<Uuid> {
     if name.trim().is_empty() {
         return Err(bad_request("give the destination a name"));
     }
@@ -161,17 +182,30 @@ pub async fn delete_destination(state: &SharedState, id: Uuid) -> Result<()> {
 }
 
 async fn load_destination(state: &SharedState, id: Uuid) -> anyhow::Result<DestinationConfig> {
-    let enc = sqlx::query_scalar!("SELECT config_enc FROM backup_destinations WHERE id = $1", id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| anyhow!("the backup destination was deleted"))?;
+    let enc = sqlx::query_scalar!(
+        "SELECT config_enc FROM backup_destinations WHERE id = $1",
+        id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| anyhow!("the backup destination was deleted"))?;
     Ok(serde_json::from_str(&state.cipher.decrypt(&enc)?)?)
 }
 
 /// The store and the key prefix (empty or ending in `/`).
-fn open_store(state: &SharedState, config: &DestinationConfig) -> Result<(Arc<dyn ObjectStore>, String)> {
+fn open_store(
+    state: &SharedState,
+    config: &DestinationConfig,
+) -> Result<(Arc<dyn ObjectStore>, String)> {
     match config {
-        DestinationConfig::S3 { endpoint, region, bucket, access_key_id, secret_access_key, prefix } => {
+        DestinationConfig::S3 {
+            endpoint,
+            region,
+            bucket,
+            access_key_id,
+            secret_access_key,
+            prefix,
+        } => {
             let mut builder = AmazonS3Builder::new()
                 .with_bucket_name(bucket)
                 .with_region(region)
@@ -186,7 +220,11 @@ fn open_store(state: &SharedState, config: &DestinationConfig) -> Result<(Arc<dy
                 .build()
                 .map_err(|e| bad_request(format!("invalid S3 settings: {e}")))?;
             let prefix = prefix.trim_matches('/');
-            let prefix = if prefix.is_empty() { String::new() } else { format!("{prefix}/") };
+            let prefix = if prefix.is_empty() {
+                String::new()
+            } else {
+                format!("{prefix}/")
+            };
             Ok((Arc::new(store), prefix))
         }
         DestinationConfig::Local { path } => {
@@ -215,7 +253,9 @@ pub struct Schedule {
 fn parse_cron(expr: &str) -> Result<cron::Schedule> {
     let fields = expr.split_whitespace().count();
     if fields != 5 {
-        return Err(bad_request("use a five-field cron expression, like `0 3 * * *`"));
+        return Err(bad_request(
+            "use a five-field cron expression, like `0 3 * * *`",
+        ));
     }
     cron::Schedule::from_str(&format!("0 {expr}"))
         .map_err(|e| bad_request(format!("invalid cron expression: {e}")))
@@ -231,11 +271,18 @@ pub async fn get_schedule(state: &SharedState, service_id: Uuid) -> Result<Optio
     .await?)
 }
 
-pub async fn set_schedule(state: &SharedState, service: &Service, schedule: Option<Schedule>) -> Result<()> {
+pub async fn set_schedule(
+    state: &SharedState,
+    service: &Service,
+    schedule: Option<Schedule>,
+) -> Result<()> {
     let Some(schedule) = schedule else {
-        sqlx::query!("DELETE FROM backup_schedules WHERE service_id = $1", service.id)
-            .execute(&state.db)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM backup_schedules WHERE service_id = $1",
+            service.id
+        )
+        .execute(&state.db)
+        .await?;
         return Ok(());
     };
     require_database(service)?;
@@ -273,7 +320,9 @@ pub async fn schedule_due(state: SharedState) -> Result<()> {
     .await?;
     let now = Utc::now();
     for row in rows {
-        let Ok(schedule) = parse_cron(&row.cron) else { continue };
+        let Ok(schedule) = parse_cron(&row.cron) else {
+            continue;
+        };
         let last = row.last_run_at.unwrap_or(now);
         let due = schedule.after(&last).next().is_some_and(|next| next <= now);
         if due {
@@ -329,7 +378,12 @@ pub async fn list(state: &SharedState, service_id: Uuid) -> Result<Vec<Backup>> 
     .await?)
 }
 
-pub async fn start_backup(state: &SharedState, service: &Service, destination_id: Uuid, trigger: &str) -> Result<Uuid> {
+pub async fn start_backup(
+    state: &SharedState,
+    service: &Service,
+    destination_id: Uuid,
+    trigger: &str,
+) -> Result<Uuid> {
     let engine = require_database(service)?;
     let project = services::get_project(&state.db, service.project_id).await?;
     let key = format!(
@@ -376,12 +430,15 @@ pub async fn start_restore(state: &SharedState, backup_id: Uuid) -> Result<()> {
 /// The running production container of a service.
 async fn live_container(state: &SharedState, service: &Service) -> anyhow::Result<String> {
     let id = service.id.to_string();
-    docker::list(&state.docker, &[(LABEL_SERVICE, &id), (LABEL_KIND, "production")])
-        .await?
-        .into_iter()
-        .find(docker::is_running)
-        .and_then(|c| c.id)
-        .ok_or_else(|| anyhow!("the database is not running"))
+    docker::list(
+        &state.docker,
+        &[(LABEL_SERVICE, &id), (LABEL_KIND, "production")],
+    )
+    .await?
+    .into_iter()
+    .find(docker::is_running)
+    .and_then(|c| c.id)
+    .ok_or_else(|| anyhow!("the database is not running"))
 }
 
 pub async fn run_backup(state: &SharedState, backup_id: Uuid) -> Result<()> {
@@ -395,7 +452,9 @@ pub async fn run_backup(state: &SharedState, backup_id: Uuid) -> Result<()> {
         return Ok(());
     };
     let outcome = async {
-        let destination_id = row.destination_id.ok_or_else(|| anyhow!("the destination was deleted"))?;
+        let destination_id = row
+            .destination_id
+            .ok_or_else(|| anyhow!("the destination was deleted"))?;
         let service = services::get_service(&state.db, row.service_id).await?;
         let engine = require_database(&service)?;
         let config = load_destination(state, destination_id).await?;
@@ -452,7 +511,9 @@ async fn dump(
             },
         )
         .await?;
-    let StartExecResults::Attached { mut output, .. } = state.docker.start_exec(&exec.id, None).await? else {
+    let StartExecResults::Attached { mut output, .. } =
+        state.docker.start_exec(&exec.id, None).await?
+    else {
         bail!("could not attach to the dump");
     };
 
@@ -465,18 +526,31 @@ async fn dump(
             _ => {}
         }
     }
-    let code = state.docker.inspect_exec(&exec.id).await?.exit_code.unwrap_or(-1);
+    let code = state
+        .docker
+        .inspect_exec(&exec.id)
+        .await?
+        .exit_code
+        .unwrap_or(-1);
     if code != 0 {
         drop(writer);
         let _ = store.delete(path).await;
-        bail!("dump exited with code {code}: {}", String::from_utf8_lossy(&stderr).trim());
+        bail!(
+            "dump exited with code {code}: {}",
+            String::from_utf8_lossy(&stderr).trim()
+        );
     }
     writer.shutdown().await.context("uploading the backup")?;
     Ok(store.head(path).await?.size)
 }
 
 /// Keeps the newest `keep` backups of a service at a destination.
-async fn prune(state: &SharedState, service: &Service, destination_id: Uuid, store: Arc<dyn ObjectStore>) -> anyhow::Result<()> {
+async fn prune(
+    state: &SharedState,
+    service: &Service,
+    destination_id: Uuid,
+    store: Arc<dyn ObjectStore>,
+) -> anyhow::Result<()> {
     let keep = sqlx::query_scalar!(
         "SELECT keep FROM backup_schedules WHERE service_id = $1 AND destination_id = $2",
         service.id,
@@ -499,7 +573,9 @@ async fn prune(state: &SharedState, service: &Service, destination_id: Uuid, sto
     .fetch_all(&state.db)
     .await?;
     for backup in stale {
-        let _ = store.delete(&Path::from(format!("{prefix}{}", backup.object_key))).await;
+        let _ = store
+            .delete(&Path::from(format!("{prefix}{}", backup.object_key)))
+            .await;
         sqlx::query!("DELETE FROM backups WHERE id = $1", backup.id)
             .execute(&state.db)
             .await?;
@@ -515,12 +591,17 @@ pub async fn run_restore(state: &SharedState, backup_id: Uuid) -> Result<()> {
     .fetch_optional(&state.db)
     .await?;
     let Some(row) = row else { return Ok(()) };
-    sqlx::query!("UPDATE backups SET restore_status = 'running' WHERE id = $1", backup_id)
-        .execute(&state.db)
-        .await?;
+    sqlx::query!(
+        "UPDATE backups SET restore_status = 'running' WHERE id = $1",
+        backup_id
+    )
+    .execute(&state.db)
+    .await?;
 
     let outcome = async {
-        let destination_id = row.destination_id.ok_or_else(|| anyhow!("the destination was deleted"))?;
+        let destination_id = row
+            .destination_id
+            .ok_or_else(|| anyhow!("the destination was deleted"))?;
         let service = services::get_service(&state.db, row.service_id).await?;
         let engine = require_database(&service)?;
         let config = load_destination(state, destination_id).await?;
@@ -530,7 +611,8 @@ pub async fn run_restore(state: &SharedState, backup_id: Uuid) -> Result<()> {
             restore_redis(state, &service, store, &path).await
         } else {
             let container = live_container(state, &service).await?;
-            let command = engines::restore_command(engine.id).ok_or_else(|| anyhow!("no restore command"))?;
+            let command =
+                engines::restore_command(engine.id).ok_or_else(|| anyhow!("no restore command"))?;
             pipe_into_exec(state, &container, command, store, &path).await
         }
     }
@@ -548,7 +630,13 @@ pub async fn run_restore(state: &SharedState, backup_id: Uuid) -> Result<()> {
     )
     .execute(&state.db)
     .await?;
-    services::audit(&state.db, &format!("backup.restore.{status}"), &row.object_key, error.as_deref()).await;
+    services::audit(
+        &state.db,
+        &format!("backup.restore.{status}"),
+        &row.object_key,
+        error.as_deref(),
+    )
+    .await;
     Ok(())
 }
 
@@ -573,7 +661,11 @@ async fn pipe_into_exec(
             },
         )
         .await?;
-    let StartExecResults::Attached { mut output, mut input } = state.docker.start_exec(&exec.id, None).await? else {
+    let StartExecResults::Attached {
+        mut output,
+        mut input,
+    } = state.docker.start_exec(&exec.id, None).await?
+    else {
         bail!("could not attach to the restore");
     };
     let collect = tokio::spawn(async move {
@@ -584,25 +676,44 @@ async fn pipe_into_exec(
         text
     });
 
-    let stream = store.get(path).await?.into_stream().map_err(std::io::Error::other);
+    let stream = store
+        .get(path)
+        .await?
+        .into_stream()
+        .map_err(std::io::Error::other);
     let mut source = GzipDecoder::new(BufReader::new(StreamReader::new(stream)));
-    tokio::io::copy(&mut source, &mut input).await.context("streaming the backup")?;
+    tokio::io::copy(&mut source, &mut input)
+        .await
+        .context("streaming the backup")?;
     input.shutdown().await?;
     drop(input);
 
     let text = tokio::time::timeout(Duration::from_secs(60 * 60), collect)
         .await
         .context("the restore did not finish within an hour")??;
-    let code = state.docker.inspect_exec(&exec.id).await?.exit_code.unwrap_or(-1);
+    let code = state
+        .docker
+        .inspect_exec(&exec.id)
+        .await?
+        .exit_code
+        .unwrap_or(-1);
     if code != 0 {
-        bail!("restore exited with code {code}: {}", String::from_utf8_lossy(&text).trim());
+        bail!(
+            "restore exited with code {code}: {}",
+            String::from_utf8_lossy(&text).trim()
+        );
     }
     Ok(())
 }
 
 /// Redis loads its data from dump.rdb at start, so: stop it, swap the file using
 /// a helper with the volume mounted, and start it again.
-async fn restore_redis(state: &SharedState, service: &Service, store: Arc<dyn ObjectStore>, path: &Path) -> anyhow::Result<()> {
+async fn restore_redis(
+    state: &SharedState,
+    service: &Service,
+    store: Arc<dyn ObjectStore>,
+    path: &Path,
+) -> anyhow::Result<()> {
     let container = live_container(state, service).await?;
     let volume = services::volumes(&state.db, service.id)
         .await
@@ -613,7 +724,13 @@ async fn restore_redis(state: &SharedState, service: &Service, store: Arc<dyn Ob
 
     docker::stop(&state.docker, &container).await?;
     let helper_name = format!("jd-restore-{}", &service.id.simple().to_string()[..12]);
-    let mut body = spec::helper(&state.config.builder_image, &["sleep", "3600"], vec![], None, false);
+    let mut body = spec::helper(
+        &state.config.builder_image,
+        &["sleep", "3600"],
+        vec![],
+        None,
+        false,
+    );
     if let Some(host) = body.host_config.as_mut() {
         host.binds = Some(vec![format!("{}:/data", volume.name)]);
     }
@@ -653,8 +770,20 @@ mod tests {
 
     #[test]
     fn local_paths_cannot_escape_the_backup_dir() {
-        assert!(DestinationConfig::Local { path: "../etc".into() }.validate().is_err());
-        assert!(DestinationConfig::Local { path: "/etc".into() }.validate().is_err());
-        assert!(DestinationConfig::Local { path: "nightly".into() }.validate().is_ok());
+        assert!(DestinationConfig::Local {
+            path: "../etc".into()
+        }
+        .validate()
+        .is_err());
+        assert!(DestinationConfig::Local {
+            path: "/etc".into()
+        }
+        .validate()
+        .is_err());
+        assert!(DestinationConfig::Local {
+            path: "nightly".into()
+        }
+        .validate()
+        .is_ok());
     }
 }

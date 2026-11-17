@@ -24,7 +24,10 @@ pub fn router(state: SharedState) -> Router {
         .route("/auth/password", put(admin::change_password))
         // projects and services
         .route("/projects", get(projects::list).post(projects::create))
-        .route("/projects/{id}", get(projects::get).delete(projects::delete))
+        .route(
+            "/projects/{id}",
+            get(projects::get).delete(projects::delete),
+        )
         .route("/projects/{id}/services", post(projects::create_service))
         .route(
             "/services/{id}",
@@ -34,13 +37,22 @@ pub fn router(state: SharedState) -> Router {
         )
         .route("/services/{id}/actions", post(projects::service_action))
         .route("/services/{id}/deployments", get(projects::deployments))
-        .route("/services/{id}/env", get(projects::get_env).put(projects::put_env))
+        .route(
+            "/services/{id}/env",
+            get(projects::get_env).put(projects::put_env),
+        )
         .route("/services/{id}/domains", post(projects::add_domain))
-        .route("/services/{id}/domains/{domain_id}", delete(projects::remove_domain))
+        .route(
+            "/services/{id}/domains/{domain_id}",
+            delete(projects::remove_domain),
+        )
         .route("/services/{id}/logs", get(streams::runtime_logs))
         .route("/services/{id}/metrics", get(streams::metrics))
         .route("/services/{id}/terminal", get(streams::terminal))
-        .route("/services/{id}/backups", get(admin::list_backups).post(admin::backup_now))
+        .route(
+            "/services/{id}/backups",
+            get(admin::list_backups).post(admin::backup_now),
+        )
         .route(
             "/services/{id}/backup-schedule",
             get(admin::get_schedule).put(admin::put_schedule),
@@ -53,12 +65,18 @@ pub fn router(state: SharedState) -> Router {
             "/backup-destinations",
             get(admin::list_destinations).post(admin::create_destination),
         )
-        .route("/backup-destinations/{id}", delete(admin::delete_destination))
+        .route(
+            "/backup-destinations/{id}",
+            delete(admin::delete_destination),
+        )
         .route("/backups/{id}/restore", post(admin::restore))
         // templates and settings
         .route("/templates", get(admin::list_templates))
         .route("/templates/{id}/deploy", post(admin::deploy_template))
-        .route("/settings", get(admin::get_settings).put(admin::put_settings))
+        .route(
+            "/settings",
+            get(admin::get_settings).put(admin::put_settings),
+        )
         // webhooks authenticate by signature, not session
         .route("/webhooks/github/{id}", post(admin::github))
         .route("/webhooks/gitlab/{id}", post(admin::gitlab));

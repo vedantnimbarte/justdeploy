@@ -45,16 +45,24 @@ pub async fn deployment_logs(
         .and_then(|v| v.parse::<i64>().ok())
         .unwrap_or(0);
     let stream = async_stream_logs(state, id, after);
-    Ok(Sse::new(stream).keep_alive(KeepAlive::default()).into_response())
+    Ok(Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+        .into_response())
 }
 
-fn async_stream_logs(state: SharedState, id: Uuid, after: i64) -> impl Stream<Item = Result<Event, Infallible>> + Send {
-    futures::stream::unfold((state, after, false), move |(state, after, done)| async move {
-        if done {
-            return None;
-        }
-        loop {
-            let lines = sqlx::query!(
+fn async_stream_logs(
+    state: SharedState,
+    id: Uuid,
+    after: i64,
+) -> impl Stream<Item = Result<Event, Infallible>> + Send {
+    futures::stream::unfold(
+        (state, after, false),
+        move |(state, after, done)| async move {
+            if done {
+                return None;
+            }
+            loop {
+                let lines = sqlx::query!(
                 "SELECT id, line FROM deployment_logs WHERE deployment_id = $1 AND id > $2 ORDER BY id LIMIT 500",
                 id,
                 after
@@ -62,26 +70,35 @@ fn async_stream_logs(state: SharedState, id: Uuid, after: i64) -> impl Stream<It
             .fetch_all(&state.db)
             .await
             .unwrap_or_default();
-            if let Some(last) = lines.last() {
-                let last_id = last.id;
-                let text = lines.into_iter().map(|l| l.line).collect::<Vec<_>>().join("\n");
-                return Some((
-                    Ok(Event::default().id(last_id.to_string()).data(text)),
-                    (state, last_id, false),
-                ));
+                if let Some(last) = lines.last() {
+                    let last_id = last.id;
+                    let text = lines
+                        .into_iter()
+                        .map(|l| l.line)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    return Some((
+                        Ok(Event::default().id(last_id.to_string()).data(text)),
+                        (state, last_id, false),
+                    ));
+                }
+                let finished =
+                    sqlx::query_scalar!("SELECT status FROM deployments WHERE id = $1", id)
+                        .fetch_optional(&state.db)
+                        .await
+                        .ok()
+                        .flatten()
+                        .is_none_or(|s| !matches!(s.as_str(), "queued" | "building" | "deploying"));
+                if finished {
+                    return Some((
+                        Ok(Event::default().event("end").data("")),
+                        (state, after, true),
+                    ));
+                }
+                tokio::time::sleep(Duration::from_millis(700)).await;
             }
-            let finished = sqlx::query_scalar!("SELECT status FROM deployments WHERE id = $1", id)
-                .fetch_optional(&state.db)
-                .await
-                .ok()
-                .flatten()
-                .is_none_or(|s| !matches!(s.as_str(), "queued" | "building" | "deploying"));
-            if finished {
-                return Some((Ok(Event::default().event("end").data("")), (state, after, true)));
-            }
-            tokio::time::sleep(Duration::from_millis(700)).await;
-        }
-    })
+        },
+    )
 }
 
 #[derive(Deserialize)]
@@ -121,17 +138,22 @@ pub async fn runtime_logs(
         })
         .filter(|lines| futures::future::ready(!lines.is_empty()))
         .map(|lines| Ok::<_, Infallible>(Event::default().data(lines.join("\n"))));
-    Ok(Sse::new(stream).keep_alive(KeepAlive::default()).into_response())
+    Ok(Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+        .into_response())
 }
 
 async fn live_container(state: &SharedState, service_id: Uuid) -> Result<Option<String>> {
     services::get_service(&state.db, service_id).await?;
     let id = service_id.to_string();
-    Ok(docker::list(&state.docker, &[(LABEL_SERVICE, &id), (LABEL_KIND, "production")])
-        .await?
-        .into_iter()
-        .find(docker::is_running)
-        .and_then(|c| c.id))
+    Ok(docker::list(
+        &state.docker,
+        &[(LABEL_SERVICE, &id), (LABEL_KIND, "production")],
+    )
+    .await?
+    .into_iter()
+    .find(docker::is_running)
+    .and_then(|c| c.id))
 }
 
 #[derive(Deserialize)]
@@ -145,7 +167,9 @@ pub async fn metrics(
     Path(id): Path<Uuid>,
     Query(query): Query<MetricsQuery>,
 ) -> Result<Json<Vec<metrics::Sample>>> {
-    Ok(Json(metrics::series(&state.db, id, query.minutes.unwrap_or(60)).await?))
+    Ok(Json(
+        metrics::series(&state.db, id, query.minutes.unwrap_or(60)).await?,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -175,7 +199,11 @@ pub async fn terminal(
     }))
 }
 
-async fn run_terminal(state: &SharedState, container: &str, socket: WebSocket) -> anyhow::Result<()> {
+async fn run_terminal(
+    state: &SharedState,
+    container: &str,
+    socket: WebSocket,
+) -> anyhow::Result<()> {
     let exec = state
         .docker
         .create_exec(
@@ -195,7 +223,11 @@ async fn run_terminal(state: &SharedState, container: &str, socket: WebSocket) -
             },
         )
         .await?;
-    let StartExecResults::Attached { mut output, mut input } = state.docker.start_exec(&exec.id, None).await? else {
+    let StartExecResults::Attached {
+        mut output,
+        mut input,
+    } = state.docker.start_exec(&exec.id, None).await?
+    else {
         anyhow::bail!("could not attach");
     };
     let (mut to_browser, mut from_browser) = socket.split();

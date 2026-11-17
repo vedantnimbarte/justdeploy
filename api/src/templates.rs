@@ -52,7 +52,10 @@ pub fn catalog() -> Vec<Template> {
 }
 
 /// Replaces `${...}` placeholders using services created earlier in the template.
-fn resolve(value: &str, created: &HashMap<String, (Option<String>, HashMap<String, String>)>) -> Result<String> {
+fn resolve(
+    value: &str,
+    created: &HashMap<String, (Option<String>, HashMap<String, String>)>,
+) -> Result<String> {
     let mut out = String::new();
     let mut rest = value;
     while let Some(start) = rest.find("${") {
@@ -95,7 +98,9 @@ pub async fn deploy(state: &SharedState, id: &str, target: DeployTemplate) -> Re
         .ok_or(crate::error::Error::NotFound)?;
     let project = match (target.project_id, target.project_name) {
         (Some(project_id), _) => services::get_project(&state.db, project_id).await?,
-        (None, Some(name)) if !name.trim().is_empty() => services::create_project(&state.db, name.trim()).await?,
+        (None, Some(name)) if !name.trim().is_empty() => {
+            services::create_project(&state.db, name.trim()).await?
+        }
         _ => return Err(bad_request("choose a project or name a new one")),
     };
 
@@ -130,11 +135,20 @@ pub async fn deploy(state: &SharedState, id: &str, target: DeployTemplate) -> Re
             },
         )
         .await?;
-        let vars: HashMap<String, String> = services::env(state, service.id).await?.into_iter().collect();
+        let vars: HashMap<String, String> = services::env(state, service.id)
+            .await?
+            .into_iter()
+            .collect();
         let url = services::connection_url(state, &service).await?;
         created.insert(spec.name.clone(), (url, vars));
     }
-    services::audit(&state.db, "template.deployed", &template.id, Some(&project.name)).await;
+    services::audit(
+        &state.db,
+        "template.deployed",
+        &template.id,
+        Some(&project.name),
+    )
+    .await;
     Ok(project)
 }
 
@@ -151,7 +165,8 @@ mod tests {
         for t in &templates {
             assert!(ids.insert(t.id.clone()), "duplicate template id {}", t.id);
             assert!(
-                ["frontend", "backend", "fullstack", "selfhosted", "database"].contains(&t.category.as_str()),
+                ["frontend", "backend", "fullstack", "selfhosted", "database"]
+                    .contains(&t.category.as_str()),
                 "{} has category {}",
                 t.id,
                 t.category
@@ -162,7 +177,9 @@ mod tests {
                 match s.kind.as_str() {
                     "app" => assert!(!s.root_dir.is_empty(), "{}: app without root_dir", t.id),
                     "image" => assert!(s.image.is_some(), "{}: image service without image", t.id),
-                    "database" => assert!(engines::get(s.engine.as_deref().unwrap_or("")).is_some()),
+                    "database" => {
+                        assert!(engines::get(s.engine.as_deref().unwrap_or("")).is_some())
+                    }
                     other => panic!("{}: unknown kind {other}", t.id),
                 }
                 if s.public {
@@ -171,9 +188,15 @@ mod tests {
                 // Placeholders may only point at services declared earlier.
                 for value in s.env.values() {
                     for (service, _) in value.match_indices("${").filter_map(|(i, _)| {
-                        value[i + 2..].split_once('}').and_then(|(k, _)| k.split_once('.'))
+                        value[i + 2..]
+                            .split_once('}')
+                            .and_then(|(k, _)| k.split_once('.'))
                     }) {
-                        assert!(seen.contains(&service.to_string()), "{}: {value} refers forward", t.id);
+                        assert!(
+                            seen.contains(&service.to_string()),
+                            "{}: {value} refers forward",
+                            t.id
+                        );
                     }
                 }
                 seen.push(s.name.clone());
@@ -191,8 +214,14 @@ mod tests {
                 HashMap::from([("POSTGRES_USER".to_string(), "app".to_string())]),
             ),
         );
-        assert_eq!(resolve("${db.url}", &created).unwrap(), "postgresql://app:pw@db:5432/app");
-        assert_eq!(resolve("user=${db.POSTGRES_USER}!", &created).unwrap(), "user=app!");
+        assert_eq!(
+            resolve("${db.url}", &created).unwrap(),
+            "postgresql://app:pw@db:5432/app"
+        );
+        assert_eq!(
+            resolve("user=${db.POSTGRES_USER}!", &created).unwrap(),
+            "user=app!"
+        );
         assert_eq!(resolve("${random}", &created).unwrap().len(), 32);
         assert!(resolve("${cache.url}", &created).is_err());
         assert!(resolve("${oops", &created).is_err());

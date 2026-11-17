@@ -12,9 +12,24 @@ use std::{collections::HashSet, future::Future, time::Duration};
 use uuid::Uuid;
 
 pub fn spawn(state: SharedState) {
-    every(state.clone(), "reconcile", Duration::from_secs(60), reconcile);
-    every(state.clone(), "metrics", Duration::from_secs(30), metrics::sample);
-    every(state.clone(), "backup schedules", Duration::from_secs(60), backups::schedule_due);
+    every(
+        state.clone(),
+        "reconcile",
+        Duration::from_secs(60),
+        reconcile,
+    );
+    every(
+        state.clone(),
+        "metrics",
+        Duration::from_secs(30),
+        metrics::sample,
+    );
+    every(
+        state.clone(),
+        "backup schedules",
+        Duration::from_secs(60),
+        backups::schedule_due,
+    );
     every(state, "cleanup", Duration::from_secs(60 * 60), cleanup);
 }
 
@@ -123,7 +138,8 @@ async fn cleanup(state: SharedState) -> Result<()> {
 
 /// Build and health-check containers left behind by a crash.
 pub async fn remove_stale_helpers(state: &SharedState) {
-    let filters = std::collections::HashMap::from([("label", vec![format!("{}=helper", docker::MANAGED)])]);
+    let filters =
+        std::collections::HashMap::from([("label", vec![format!("{}=helper", docker::MANAGED)])]);
     let options = bollard::query_parameters::ListContainersOptionsBuilder::new()
         .all(true)
         .filters(&filters)

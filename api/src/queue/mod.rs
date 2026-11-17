@@ -155,7 +155,9 @@ async fn run(state: &SharedState, job: Job) -> Result<()> {
         Job::Deploy { deployment_id } => deploy::run(state, deployment_id).await,
         Job::RemoveService { service_id } => deploy::remove_service(state, service_id).await,
         Job::RemoveProject { project_id } => deploy::remove_project(state, project_id).await,
-        Job::RemovePreview { service_id, pr } => deploy::remove_preview(state, service_id, pr).await,
+        Job::RemovePreview { service_id, pr } => {
+            deploy::remove_preview(state, service_id, pr).await
+        }
         Job::Backup { backup_id } => crate::backups::run_backup(state, backup_id).await,
         Job::Restore { backup_id } => crate::backups::run_restore(state, backup_id).await,
     }

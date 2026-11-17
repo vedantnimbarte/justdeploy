@@ -4,6 +4,7 @@ pub mod spec;
 
 use anyhow::{anyhow, Result};
 use bollard::{
+    container::LogOutput,
     errors::Error as DockerError,
     models::{ContainerCreateBody, ContainerSummary, NetworkCreateRequest, VolumeCreateRequest},
     query_parameters::{
@@ -11,7 +12,6 @@ use bollard::{
         LogsOptionsBuilder, RemoveContainerOptionsBuilder, RemoveImageOptionsBuilder,
         StopContainerOptionsBuilder,
     },
-    container::LogOutput,
     Docker,
 };
 use futures::StreamExt;
@@ -25,11 +25,23 @@ pub const LABEL_KIND: &str = "jd.kind";
 pub const LABEL_PR: &str = "jd.pr";
 
 pub fn is_not_found(error: &DockerError) -> bool {
-    matches!(error, DockerError::DockerResponseServerError { status_code: 404, .. })
+    matches!(
+        error,
+        DockerError::DockerResponseServerError {
+            status_code: 404,
+            ..
+        }
+    )
 }
 
 fn is_conflict(error: &DockerError) -> bool {
-    matches!(error, DockerError::DockerResponseServerError { status_code: 409, .. })
+    matches!(
+        error,
+        DockerError::DockerResponseServerError {
+            status_code: 409,
+            ..
+        }
+    )
 }
 
 pub async fn ensure_network(docker: &Docker, name: &str) -> Result<()> {
@@ -134,7 +146,11 @@ pub fn is_running(container: &ContainerSummary) -> bool {
     )
 }
 
-pub async fn create_and_start(docker: &Docker, name: &str, body: ContainerCreateBody) -> Result<String> {
+pub async fn create_and_start(
+    docker: &Docker,
+    name: &str,
+    body: ContainerCreateBody,
+) -> Result<String> {
     // A container of the same name left over from a crash would block the create.
     remove(docker, name).await?;
     let options = CreateContainerOptionsBuilder::new().name(name).build();
@@ -210,7 +226,10 @@ pub async fn run_to_completion(
         let mut splitter = LineSplitter::default();
         while let Some(chunk) = stream.next().await {
             match chunk {
-                Ok(chunk) => splitter.push(&output_bytes(&chunk)).into_iter().for_each(&mut on_line),
+                Ok(chunk) => splitter
+                    .push(&output_bytes(&chunk))
+                    .into_iter()
+                    .for_each(&mut on_line),
                 Err(_) => break,
             }
         }
@@ -219,7 +238,10 @@ pub async fn run_to_completion(
     let timed_out = tokio::time::timeout(timeout, follow).await.is_err();
     if timed_out {
         remove(docker, &id).await?;
-        return Err(anyhow!("timed out after {} minutes", timeout.as_secs() / 60));
+        return Err(anyhow!(
+            "timed out after {} minutes",
+            timeout.as_secs() / 60
+        ));
     }
     let code = match docker.wait_container(&id, None).next().await {
         Some(Ok(response)) => response.status_code,

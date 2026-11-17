@@ -40,15 +40,19 @@ pub async fn set_base_domain(db: &PgPool, domain: &str) -> Result<()> {
 // ---------------------------------------------------------------- projects
 
 pub async fn list_projects(db: &PgPool) -> Result<Vec<Project>> {
-    Ok(sqlx::query_as!(Project, "SELECT * FROM projects ORDER BY name")
-        .fetch_all(db)
-        .await?)
+    Ok(
+        sqlx::query_as!(Project, "SELECT * FROM projects ORDER BY name")
+            .fetch_all(db)
+            .await?,
+    )
 }
 
 pub async fn get_project(db: &PgPool, id: Uuid) -> Result<Project> {
-    Ok(sqlx::query_as!(Project, "SELECT * FROM projects WHERE id = $1", id)
-        .fetch_one(db)
-        .await?)
+    Ok(
+        sqlx::query_as!(Project, "SELECT * FROM projects WHERE id = $1", id)
+            .fetch_one(db)
+            .await?,
+    )
 }
 
 pub async fn create_project(db: &PgPool, name: &str) -> Result<Project> {
@@ -87,9 +91,11 @@ pub async fn list_services(db: &PgPool, project_id: Uuid) -> Result<Vec<Service>
 }
 
 pub async fn get_service(db: &PgPool, id: Uuid) -> Result<Service> {
-    Ok(sqlx::query_as!(Service, "SELECT * FROM services WHERE id = $1", id)
-        .fetch_one(db)
-        .await?)
+    Ok(
+        sqlx::query_as!(Service, "SELECT * FROM services WHERE id = $1", id)
+            .fetch_one(db)
+            .await?,
+    )
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -118,11 +124,17 @@ pub struct NewService {
 }
 
 /// Creates a service and queues its first deployment.
-pub async fn create_service(state: &SharedState, project_id: Uuid, new: NewService) -> Result<Service> {
+pub async fn create_service(
+    state: &SharedState,
+    project_id: Uuid,
+    new: NewService,
+) -> Result<Service> {
     let project = get_project(&state.db, project_id).await?;
     names::validate(&new.name, "service")?;
     if names::generated_host(&new.name, &project.name, "x").len() > 63 + 2 {
-        return Err(bad_request("service and project names together are too long for a hostname"));
+        return Err(bad_request(
+            "service and project names together are too long for a hostname",
+        ));
     }
 
     let mut env = new.env.clone();
@@ -140,7 +152,9 @@ pub async fn create_service(state: &SharedState, project_id: Uuid, new: NewServi
         }
         "image" => {
             if image.is_none() {
-                return Err(bad_request("an image is required, for example nginx:alpine"));
+                return Err(bad_request(
+                    "an image is required, for example nginx:alpine",
+                ));
             }
         }
         "database" => {
@@ -180,14 +194,20 @@ pub async fn create_service(state: &SharedState, project_id: Uuid, new: NewServi
         new.name,
         new.kind,
         new.repo_url.as_deref().map(str::trim),
-        new.branch.clone().filter(|b| !b.is_empty()).unwrap_or_else(|| "main".into()),
+        new.branch
+            .clone()
+            .filter(|b| !b.is_empty())
+            .unwrap_or_else(|| "main".into()),
         new.root_dir.trim().trim_matches('/'),
         new.git_token
             .as_deref()
             .filter(|t| !t.is_empty())
             .map(|t| state.cipher.encrypt(t)),
         new.build_type.clone().unwrap_or_else(|| "auto".into()),
-        new.dockerfile_path.clone().filter(|p| !p.is_empty()).unwrap_or_else(|| "Dockerfile".into()),
+        new.dockerfile_path
+            .clone()
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| "Dockerfile".into()),
         image,
         new.engine,
         port,
@@ -221,7 +241,9 @@ pub async fn create_service(state: &SharedState, project_id: Uuid, new: NewServi
 
 async fn add_volume(tx: &mut sqlx::PgConnection, service_id: Uuid, path: &str) -> Result<()> {
     if !path.starts_with('/') {
-        return Err(bad_request("volume mount paths must be absolute, like /data"));
+        return Err(bad_request(
+            "volume mount paths must be absolute, like /data",
+        ));
     }
     sqlx::query!(
         "INSERT INTO volumes (id, service_id, name, mount_path) VALUES ($1, $2, $3, $4)",
@@ -237,7 +259,9 @@ async fn add_volume(tx: &mut sqlx::PgConnection, service_id: Uuid, path: &str) -
 
 fn validate_limits(cpu_millis: Option<i32>, memory_mb: Option<i32>) -> Result<()> {
     if cpu_millis.is_some_and(|c| !(50..=64_000).contains(&c)) {
-        return Err(bad_request("CPU limit must be between 50 and 64000 millicores"));
+        return Err(bad_request(
+            "CPU limit must be between 50 and 64000 millicores",
+        ));
     }
     if memory_mb.is_some_and(|m| !(16..=262_144).contains(&m)) {
         return Err(bad_request("memory limit must be between 16 MB and 256 GB"));
@@ -281,14 +305,36 @@ pub struct ServiceUpdate {
 
 /// Saves settings, then redeploys: a source change rebuilds, anything else
 /// re-releases the current image.
-pub async fn update_service(state: &SharedState, id: Uuid, update: ServiceUpdate) -> Result<Service> {
+pub async fn update_service(
+    state: &SharedState,
+    id: Uuid,
+    update: ServiceUpdate,
+) -> Result<Service> {
     let current = get_service(&state.db, id).await?;
-    let source_changed = update.repo_url.as_ref().is_some_and(|v| Some(v) != current.repo_url.as_ref())
-        || update.branch.as_ref().is_some_and(|v| Some(v) != current.branch.as_ref())
-        || update.root_dir.as_ref().is_some_and(|v| v != &current.root_dir)
-        || update.build_type.as_ref().is_some_and(|v| v != &current.build_type)
-        || update.dockerfile_path.as_ref().is_some_and(|v| v != &current.dockerfile_path)
-        || update.image.as_ref().is_some_and(|v| Some(v) != current.image.as_ref())
+    let source_changed = update
+        .repo_url
+        .as_ref()
+        .is_some_and(|v| Some(v) != current.repo_url.as_ref())
+        || update
+            .branch
+            .as_ref()
+            .is_some_and(|v| Some(v) != current.branch.as_ref())
+        || update
+            .root_dir
+            .as_ref()
+            .is_some_and(|v| v != &current.root_dir)
+        || update
+            .build_type
+            .as_ref()
+            .is_some_and(|v| v != &current.build_type)
+        || update
+            .dockerfile_path
+            .as_ref()
+            .is_some_and(|v| v != &current.dockerfile_path)
+        || update
+            .image
+            .as_ref()
+            .is_some_and(|v| Some(v) != current.image.as_ref())
         || update.git_token.is_some();
 
     let port = update.port.unwrap_or(current.port);
@@ -304,11 +350,15 @@ pub async fn update_service(state: &SharedState, id: Uuid, update: ServiceUpdate
         return Err(bad_request("public port must be between 1024 and 65535"));
     }
     if current.kind == "database" && public {
-        return Err(bad_request("databases are not served over HTTP; use a public port instead"));
+        return Err(bad_request(
+            "databases are not served over HTTP; use a public port instead",
+        ));
     }
     let preview = update.preview_enabled.unwrap_or(current.preview_enabled);
     if preview && current.kind != "app" {
-        return Err(bad_request("only services built from Git can have preview deploys"));
+        return Err(bad_request(
+            "only services built from Git can have preview deploys",
+        ));
     }
     let git_token_enc = match update.git_token.as_deref() {
         None => current.git_token_enc.clone(),
@@ -330,7 +380,10 @@ pub async fn update_service(state: &SharedState, id: Uuid, update: ServiceUpdate
         id,
         update.repo_url.or(current.repo_url),
         update.branch.or(current.branch),
-        update.root_dir.map(|r| r.trim().trim_matches('/').to_string()).unwrap_or(current.root_dir),
+        update
+            .root_dir
+            .map(|r| r.trim().trim_matches('/').to_string())
+            .unwrap_or(current.root_dir),
         git_token_enc,
         update.build_type.unwrap_or(current.build_type),
         update.dockerfile_path.unwrap_or(current.dockerfile_path),
@@ -350,7 +403,9 @@ pub async fn update_service(state: &SharedState, id: Uuid, update: ServiceUpdate
     .fetch_one(&state.db)
     .await
     .map_err(|e| match Error::from(e) {
-        Error::Conflict(_) => Error::Conflict("that public port is already used by another service".into()),
+        Error::Conflict(_) => {
+            Error::Conflict("that public port is already used by another service".into())
+        }
         other => other,
     })?;
 
@@ -363,9 +418,12 @@ pub async fn update_service(state: &SharedState, id: Uuid, update: ServiceUpdate
 }
 
 pub async fn delete_service(state: &SharedState, id: Uuid) -> Result<()> {
-    sqlx::query!("UPDATE services SET desired_state = 'deleting' WHERE id = $1", id)
-        .execute(&state.db)
-        .await?;
+    sqlx::query!(
+        "UPDATE services SET desired_state = 'deleting' WHERE id = $1",
+        id
+    )
+    .execute(&state.db)
+    .await?;
     queue::enqueue(&state.db, Job::RemoveService { service_id: id }).await
 }
 
@@ -383,7 +441,11 @@ pub struct NewDeployment {
     pub image_ref: Option<String>,
 }
 
-pub async fn create_deployment(state: &SharedState, service: &Service, new: NewDeployment) -> Result<Deployment> {
+pub async fn create_deployment(
+    state: &SharedState,
+    service: &Service,
+    new: NewDeployment,
+) -> Result<Deployment> {
     if service.desired_state == "deleting" {
         return Err(Error::Conflict("this service is being deleted".into()));
     }
@@ -408,12 +470,22 @@ pub async fn create_deployment(state: &SharedState, service: &Service, new: NewD
     )
     .fetch_one(&state.db)
     .await?;
-    queue::enqueue(&state.db, Job::Deploy { deployment_id: deployment.id }).await?;
+    queue::enqueue(
+        &state.db,
+        Job::Deploy {
+            deployment_id: deployment.id,
+        },
+    )
+    .await?;
     Ok(deployment)
 }
 
 /// A fresh build from the branch head (apps) or a fresh pull (images, databases).
-pub async fn deploy(state: &SharedState, service: &Service, trigger: &'static str) -> Result<Deployment> {
+pub async fn deploy(
+    state: &SharedState,
+    service: &Service,
+    trigger: &'static str,
+) -> Result<Deployment> {
     set_desired(&state.db, service.id, "running").await?;
     create_deployment(
         state,
@@ -434,7 +506,11 @@ pub async fn deploy(state: &SharedState, service: &Service, trigger: &'static st
 
 /// Runs the current image again with the latest settings, env and domains.
 /// With nothing deployed yet it falls back to a full deploy.
-pub async fn rerelease(state: &SharedState, service: &Service, trigger: &'static str) -> Result<Option<Deployment>> {
+pub async fn rerelease(
+    state: &SharedState,
+    service: &Service,
+    trigger: &'static str,
+) -> Result<Option<Deployment>> {
     if service.desired_state != "running" {
         return Ok(None);
     }
@@ -467,7 +543,9 @@ pub async fn rerelease(state: &SharedState, service: &Service, trigger: &'static
 pub async fn rollback(state: &SharedState, deployment_id: Uuid) -> Result<Deployment> {
     let target = get_deployment(&state.db, deployment_id).await?;
     if target.kind != "production" || target.image_ref.is_none() {
-        return Err(bad_request("only a production deployment that built successfully can be rolled back to"));
+        return Err(bad_request(
+            "only a production deployment that built successfully can be rolled back to",
+        ));
     }
     let service = get_service(&state.db, target.service_id).await?;
     set_desired(&state.db, service.id, "running").await?;
@@ -489,9 +567,11 @@ pub async fn rollback(state: &SharedState, deployment_id: Uuid) -> Result<Deploy
 }
 
 pub async fn get_deployment(db: &PgPool, id: Uuid) -> Result<Deployment> {
-    Ok(sqlx::query_as!(Deployment, "SELECT * FROM deployments WHERE id = $1", id)
-        .fetch_one(db)
-        .await?)
+    Ok(
+        sqlx::query_as!(Deployment, "SELECT * FROM deployments WHERE id = $1", id)
+            .fetch_one(db)
+            .await?,
+    )
 }
 
 pub async fn list_deployments(db: &PgPool, service_id: Uuid) -> Result<Vec<Deployment>> {
@@ -530,7 +610,11 @@ pub async fn env(state: &SharedState, service_id: Uuid) -> Result<Vec<(String, S
 }
 
 /// Replaces every variable. Returns whether anything changed.
-pub async fn replace_env(state: &SharedState, service_id: Uuid, vars: BTreeMap<String, String>) -> Result<bool> {
+pub async fn replace_env(
+    state: &SharedState,
+    service_id: Uuid,
+    vars: BTreeMap<String, String>,
+) -> Result<bool> {
     validate_env(&vars)?;
     let before: BTreeMap<String, String> = env(state, service_id).await?.into_iter().collect();
     if before == vars {
@@ -579,7 +663,9 @@ pub async fn add_domain(db: &PgPool, service: &Service, hostname: &str) -> Resul
     let hostname = hostname.trim().to_lowercase();
     names::validate_hostname(&hostname)?;
     if !service.public || service.port.is_none() {
-        return Err(bad_request("make the service public with a port before adding a domain"));
+        return Err(bad_request(
+            "make the service public with a port before adding a domain",
+        ));
     }
     sqlx::query_as!(
         Domain,
@@ -613,16 +699,31 @@ pub async fn remove_domain(db: &PgPool, service_id: Uuid, domain_id: Uuid) -> Re
 
 /// Every hostname a deployment answers on: the generated one plus custom domains,
 /// or just the preview hostname.
-pub async fn hosts(state: &SharedState, service: &Service, project: &Project, pr: Option<i32>) -> Result<Vec<String>> {
+pub async fn hosts(
+    state: &SharedState,
+    service: &Service,
+    project: &Project,
+    pr: Option<i32>,
+) -> Result<Vec<String>> {
     if !service.public || service.port.is_none() {
         return Ok(vec![]);
     }
     let base = base_domain(state).await?;
     if let Some(pr) = pr {
-        return Ok(vec![names::preview_host(pr, &service.name, &project.name, &base)]);
+        return Ok(vec![names::preview_host(
+            pr,
+            &service.name,
+            &project.name,
+            &base,
+        )]);
     }
     let mut hosts = vec![names::generated_host(&service.name, &project.name, &base)];
-    hosts.extend(domains(&state.db, service.id).await?.into_iter().map(|d| d.hostname));
+    hosts.extend(
+        domains(&state.db, service.id)
+            .await?
+            .into_iter()
+            .map(|d| d.hostname),
+    );
     Ok(hosts)
 }
 

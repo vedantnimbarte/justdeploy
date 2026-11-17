@@ -101,7 +101,8 @@ pub fn command(engine: &str) -> Option<Vec<String>> {
         vec![
             "sh".into(),
             "-c".into(),
-            r#"exec redis-server --requirepass "$REDIS_PASSWORD" --save 60 1 --appendonly no"#.into(),
+            r#"exec redis-server --requirepass "$REDIS_PASSWORD" --save 60 1 --appendonly no"#
+                .into(),
         ]
     })
 }
@@ -162,7 +163,9 @@ pub fn dump_command(engine: &str) -> Option<&'static str> {
 /// the server is stopped (see backups.rs).
 pub fn restore_command(engine: &str) -> Option<&'static str> {
     Some(match engine {
-        "postgres" => r#"psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null"#,
+        "postgres" => {
+            r#"psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null"#
+        }
         "mysql" => r#"MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot"#,
         "mariadb" => r#"MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb -uroot"#,
         "mongodb" => {

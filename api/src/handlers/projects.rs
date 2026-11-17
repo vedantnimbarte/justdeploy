@@ -47,7 +47,11 @@ async fn latest_deployment(state: &SharedState, service_id: Uuid) -> Result<Opti
     .await?)
 }
 
-fn status(service: &Service, latest: Option<&Deployment>, containers: &[&ContainerSummary]) -> String {
+fn status(
+    service: &Service,
+    latest: Option<&Deployment>,
+    containers: &[&ContainerSummary],
+) -> String {
     if service.desired_state == "deleting" {
         return "deleting".into();
     }
@@ -58,7 +62,12 @@ fn status(service: &Service, latest: Option<&Deployment>, containers: &[&Contain
         return "stopped".into();
     }
     if service.current_deployment_id.is_none() {
-        return if latest.is_some_and(|d| d.status == "failed") { "failed" } else { "idle" }.into();
+        return if latest.is_some_and(|d| d.status == "failed") {
+            "failed"
+        } else {
+            "idle"
+        }
+        .into();
     }
     let running = containers
         .iter()
@@ -137,20 +146,34 @@ pub struct NewProject {
     name: String,
 }
 
-pub async fn create(_: Admin, State(state): State<SharedState>, Json(body): Json<NewProject>) -> Result<(StatusCode, Json<Project>)> {
+pub async fn create(
+    _: Admin,
+    State(state): State<SharedState>,
+    Json(body): Json<NewProject>,
+) -> Result<(StatusCode, Json<Project>)> {
     let project = services::create_project(&state.db, body.name.trim()).await?;
     Ok((StatusCode::CREATED, Json(project)))
 }
 
-pub async fn get(_: Admin, State(state): State<SharedState>, Path(id): Path<Uuid>) -> Result<Json<ProjectView>> {
+pub async fn get(
+    _: Admin,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ProjectView>> {
     let project = services::get_project(&state.db, id).await?;
     let pid = project.id.to_string();
     let containers = docker::list(&state.docker, &[(LABEL_PROJECT, &pid)]).await?;
     let base = services::base_domain(&state).await?;
-    Ok(Json(project_view(&state, project, &containers, &base).await?))
+    Ok(Json(
+        project_view(&state, project, &containers, &base).await?,
+    ))
 }
 
-pub async fn delete(_: Admin, State(state): State<SharedState>, Path(id): Path<Uuid>) -> Result<StatusCode> {
+pub async fn delete(
+    _: Admin,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
     services::delete_project(&state, id).await?;
     Ok(StatusCode::ACCEPTED)
 }
@@ -185,7 +208,11 @@ struct Webhooks {
     secret: String,
 }
 
-pub async fn get_service(_: Admin, State(state): State<SharedState>, Path(id): Path<Uuid>) -> Result<Json<ServiceDetail>> {
+pub async fn get_service(
+    _: Admin,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ServiceDetail>> {
     let service = services::get_service(&state.db, id).await?;
     let project = services::get_project(&state.db, service.project_id).await?;
     let pid = project.id.to_string();
@@ -193,7 +220,12 @@ pub async fn get_service(_: Admin, State(state): State<SharedState>, Path(id): P
     let base = services::base_domain(&state).await?;
     let generated_host = (service.public && service.port.is_some())
         .then(|| names::generated_host(&service.name, &project.name, &base));
-    let webhook = |provider: &str| format!("{}/api/v1/webhooks/{provider}/{}", state.config.public_url, service.id);
+    let webhook = |provider: &str| {
+        format!(
+            "{}/api/v1/webhooks/{provider}/{}",
+            state.config.public_url, service.id
+        )
+    };
     Ok(Json(ServiceDetail {
         webhooks: Webhooks {
             github: webhook("github"),
@@ -217,7 +249,11 @@ pub async fn update_service(
     Ok(Json(services::update_service(&state, id, body).await?))
 }
 
-pub async fn delete_service(_: Admin, State(state): State<SharedState>, Path(id): Path<Uuid>) -> Result<StatusCode> {
+pub async fn delete_service(
+    _: Admin,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
     services::get_service(&state.db, id).await?;
     services::delete_service(&state, id).await?;
     Ok(StatusCode::ACCEPTED)
@@ -248,7 +284,12 @@ pub async fn service_action(
         "stop" => {
             services::set_desired(&state.db, id, "stopped").await?;
             let sid = id.to_string();
-            for container in docker::list(&state.docker, &[(LABEL_SERVICE, &sid), (LABEL_KIND, "production")]).await? {
+            for container in docker::list(
+                &state.docker,
+                &[(LABEL_SERVICE, &sid), (LABEL_KIND, "production")],
+            )
+            .await?
+            {
                 if let Some(cid) = container.id {
                     docker::stop(&state.docker, &cid).await?;
                 }
@@ -261,16 +302,31 @@ pub async fn service_action(
 
 // ---------------------------------------------------------------- deployments
 
-pub async fn deployments(_: Admin, State(state): State<SharedState>, Path(id): Path<Uuid>) -> Result<Json<Vec<Deployment>>> {
+pub async fn deployments(
+    _: Admin,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<Deployment>>> {
     Ok(Json(services::list_deployments(&state.db, id).await?))
 }
 
-pub async fn deployment(_: Admin, State(state): State<SharedState>, Path(id): Path<Uuid>) -> Result<Json<Deployment>> {
+pub async fn deployment(
+    _: Admin,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Deployment>> {
     Ok(Json(services::get_deployment(&state.db, id).await?))
 }
 
-pub async fn rollback(_: Admin, State(state): State<SharedState>, Path(id): Path<Uuid>) -> Result<(StatusCode, Json<Deployment>)> {
-    Ok((StatusCode::ACCEPTED, Json(services::rollback(&state, id).await?)))
+pub async fn rollback(
+    _: Admin,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> Result<(StatusCode, Json<Deployment>)> {
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(services::rollback(&state, id).await?),
+    ))
 }
 
 // ---------------------------------------------------------------- env and domains
@@ -281,10 +337,18 @@ pub struct EnvVar {
     value: String,
 }
 
-pub async fn get_env(_: Admin, State(state): State<SharedState>, Path(id): Path<Uuid>) -> Result<Json<Vec<EnvVar>>> {
+pub async fn get_env(
+    _: Admin,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<EnvVar>>> {
     services::get_service(&state.db, id).await?;
     let vars = services::env(&state, id).await?;
-    Ok(Json(vars.into_iter().map(|(key, value)| EnvVar { key, value }).collect()))
+    Ok(Json(
+        vars.into_iter()
+            .map(|(key, value)| EnvVar { key, value })
+            .collect(),
+    ))
 }
 
 #[derive(Serialize)]
@@ -308,7 +372,10 @@ pub async fn put_env(
         }
     }
     let changed = services::replace_env(&state, id, map).await?;
-    let redeploying = changed && services::rerelease(&state, &service, "env").await?.is_some();
+    let redeploying = changed
+        && services::rerelease(&state, &service, "env")
+            .await?
+            .is_some();
     Ok(Json(EnvSaved { redeploying }))
 }
 

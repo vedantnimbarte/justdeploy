@@ -43,7 +43,8 @@ impl Config {
             public_url: optional("JD_PUBLIC_URL", "http://localhost:8080")
                 .trim_end_matches('/')
                 .to_string(),
-            cookie_secure: !acme_email.is_empty() || optional("JD_COOKIE_SECURE", "false") == "true",
+            cookie_secure: !acme_email.is_empty()
+                || optional("JD_COOKIE_SECURE", "false") == "true",
             acme_email: (!acme_email.is_empty()).then_some(acme_email),
             builder_image: optional(
                 "JD_BUILDER_IMAGE",

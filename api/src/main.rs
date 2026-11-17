@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 mod auth;
 mod backups;
 mod config;
@@ -36,14 +38,17 @@ async fn main() -> anyhow::Result<()> {
         .connect(&config.database_url)
         .await
         .context("cannot connect to Postgres (DATABASE_URL)")?;
-    sqlx::migrate!().run(&db).await.context("migrations failed")?;
+    sqlx::migrate!()
+        .run(&db)
+        .await
+        .context("migrations failed")?;
 
     if std::env::args().nth(1).as_deref() == Some("reset-password") {
         return reset_password(&db).await;
     }
 
-    let docker = bollard::Docker::connect_with_local_defaults()
-        .context("cannot reach the Docker daemon")?;
+    let docker =
+        bollard::Docker::connect_with_local_defaults().context("cannot reach the Docker daemon")?;
     docker
         .ping()
         .await

@@ -78,7 +78,12 @@ pub async fn sample(state: SharedState) -> Result<()> {
 fn totals(stats: &ContainerStatsResponse) -> Totals {
     let cpu = stats.cpu_stats.clone().unwrap_or_default();
     let pre = stats.precpu_stats.clone().unwrap_or_default();
-    let used = |c: &bollard::models::ContainerCpuStats| c.cpu_usage.as_ref().and_then(|u| u.total_usage).unwrap_or(0);
+    let used = |c: &bollard::models::ContainerCpuStats| {
+        c.cpu_usage
+            .as_ref()
+            .and_then(|u| u.total_usage)
+            .unwrap_or(0)
+    };
     let cpu_delta = used(&cpu).saturating_sub(used(&pre)) as f64;
     let system_delta = cpu
         .system_cpu_usage
@@ -96,7 +101,11 @@ fn totals(stats: &ContainerStatsResponse) -> Totals {
         let cache = m
             .stats
             .as_ref()
-            .and_then(|s| s.get("inactive_file").or_else(|| s.get("total_inactive_file")).copied())
+            .and_then(|s| {
+                s.get("inactive_file")
+                    .or_else(|| s.get("total_inactive_file"))
+                    .copied()
+            })
             .unwrap_or(0);
         m.usage.unwrap_or(0).saturating_sub(cache)
     });
@@ -143,7 +152,10 @@ pub async fn series(db: &PgPool, service_id: Uuid, minutes: i32) -> Result<Vec<S
             // Counters reset when a container is replaced; show zero, not a negative spike.
             Some((ts, rx, tx)) if r.net_rx_bytes >= rx && r.net_tx_bytes >= tx => {
                 let secs = (r.ts - ts).num_milliseconds().max(1) as f64 / 1000.0;
-                ((r.net_rx_bytes - rx) as f64 / secs, (r.net_tx_bytes - tx) as f64 / secs)
+                (
+                    (r.net_rx_bytes - rx) as f64 / secs,
+                    (r.net_tx_bytes - tx) as f64 / secs,
+                )
             }
             _ => (0.0, 0.0),
         };
@@ -186,7 +198,11 @@ mod tests {
             ..Default::default()
         };
         let t = totals(&stats);
-        assert!((t.cpu - 40.0).abs() < 1e-9, "200/1000 * 2 cpus = 40%, got {}", t.cpu);
+        assert!(
+            (t.cpu - 40.0).abs() < 1e-9,
+            "200/1000 * 2 cpus = 40%, got {}",
+            t.cpu
+        );
         assert_eq!(t.memory, 600);
     }
 }

@@ -39,7 +39,9 @@ pub fn validate_hostname(host: &str) -> Result<()> {
     if ok {
         Ok(())
     } else {
-        Err(bad_request(format!("{host} is not a valid lowercase hostname")))
+        Err(bad_request(format!(
+            "{host} is not a valid lowercase hostname"
+        )))
     }
 }
 
@@ -66,7 +68,13 @@ pub fn project_network(project: Uuid) -> String {
 pub fn volume(service: Uuid, mount_path: &str) -> String {
     let slug: String = mount_path
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect();
     format!("jd-{}{}", short(service), slug.trim_end_matches('-'))
 }
@@ -97,7 +105,15 @@ mod tests {
     fn names_follow_dns_rules() {
         assert!(validate("api", "service").is_ok());
         assert!(validate("my-app2", "service").is_ok());
-        for bad in ["", "Api", "2app", "app-", "a_b", "a.b", "abcdefghijklmnopqrstuvwxy"] {
+        for bad in [
+            "",
+            "Api",
+            "2app",
+            "app-",
+            "a_b",
+            "a.b",
+            "abcdefghijklmnopqrstuvwxy",
+        ] {
             assert!(validate(bad, "service").is_err(), "{bad} should be refused");
         }
     }
@@ -113,10 +129,19 @@ mod tests {
     #[test]
     fn generated_names_are_stable_and_distinct() {
         let s = Uuid::nil();
-        assert_eq!(generated_host("api", "shop", "example.com"), "api-shop.example.com");
-        assert_eq!(preview_host(7, "api", "shop", "example.com"), "pr-7-api-shop.example.com");
+        assert_eq!(
+            generated_host("api", "shop", "example.com"),
+            "api-shop.example.com"
+        );
+        assert_eq!(
+            preview_host(7, "api", "shop", "example.com"),
+            "pr-7-api-shop.example.com"
+        );
         assert_ne!(router(s, None), router(s, Some(1)));
-        assert_eq!(volume(s, "/var/lib/postgresql/data"), "jd-00000000-var-lib-postgresql-data");
+        assert_eq!(
+            volume(s, "/var/lib/postgresql/data"),
+            "jd-00000000-var-lib-postgresql-data"
+        );
         assert!(is_built_image(&image(s, s)));
         assert!(!is_built_image("postgres:17-alpine"));
     }

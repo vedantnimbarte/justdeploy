@@ -54,9 +54,11 @@ fn hash_token(token: &str) -> String {
 }
 
 pub async fn admin_exists(db: &PgPool) -> Result<bool> {
-    Ok(sqlx::query_scalar!(r#"SELECT EXISTS (SELECT 1 FROM admin) AS "exists!""#)
-        .fetch_one(db)
-        .await?)
+    Ok(
+        sqlx::query_scalar!(r#"SELECT EXISTS (SELECT 1 FROM admin) AS "exists!""#)
+            .fetch_one(db)
+            .await?,
+    )
 }
 
 /// Creates the admin. Only ever succeeds once: the table holds a single row.
@@ -113,9 +115,12 @@ pub async fn login(state: &SharedState, email: &str, password: &str) -> Result<S
 }
 
 pub async fn logout(db: &PgPool, token: &str) -> Result<()> {
-    sqlx::query!("DELETE FROM sessions WHERE token_hash = $1", hash_token(token))
-        .execute(db)
-        .await?;
+    sqlx::query!(
+        "DELETE FROM sessions WHERE token_hash = $1",
+        hash_token(token)
+    )
+    .execute(db)
+    .await?;
     Ok(())
 }
 
@@ -143,7 +148,9 @@ pub async fn set_password(db: &PgPool, password: &str) -> Result<()> {
         .await?
         .rows_affected();
     if updated == 0 {
-        return Err(bad_request("no admin exists yet; open the dashboard to create one"));
+        return Err(bad_request(
+            "no admin exists yet; open the dashboard to create one",
+        ));
     }
     Ok(())
 }

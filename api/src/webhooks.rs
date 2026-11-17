@@ -87,7 +87,10 @@ fn first_line(message: Option<&str>) -> Option<String> {
 
 /// Deploys when the push is to the branch the service tracks.
 pub async fn on_push(state: &SharedState, service: &Service, push: Push) -> Result<String> {
-    let branch = push.git_ref.as_deref().and_then(|r| r.strip_prefix("refs/heads/"));
+    let branch = push
+        .git_ref
+        .as_deref()
+        .and_then(|r| r.strip_prefix("refs/heads/"));
     let tracked = service.branch.as_deref().unwrap_or("main");
     if branch != Some(tracked) {
         return Ok(format!("ignored: not a push to {tracked}"));
@@ -127,7 +130,11 @@ pub async fn on_push(state: &SharedState, service: &Service, push: Push) -> Resu
 }
 
 /// Builds a preview for an open pull request and removes it when it closes.
-pub async fn on_pull_request(state: &SharedState, service: &Service, event: PullRequestEvent) -> Result<String> {
+pub async fn on_pull_request(
+    state: &SharedState,
+    service: &Service,
+    event: PullRequestEvent,
+) -> Result<String> {
     if !service.preview_enabled {
         return Ok("ignored: previews are off for this service".into());
     }
@@ -200,7 +207,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(github.after.as_deref(), Some("abc"));
-        assert_eq!(first_line(github.head_commit.unwrap().message.as_deref()).as_deref(), Some("Fix"));
+        assert_eq!(
+            first_line(github.head_commit.unwrap().message.as_deref()).as_deref(),
+            Some("Fix")
+        );
 
         let gitlab: Push = serde_json::from_str(
             r#"{"object_kind":"push","ref":"refs/heads/main","checkout_sha":"def","commits":[{"message":"Add"}]}"#,

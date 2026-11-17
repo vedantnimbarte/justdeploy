@@ -78,7 +78,10 @@ pub async fn run(state: &SharedState, deployment_id: Uuid) -> Result<()> {
         Err(Error::NotFound) => return Ok(()),
         Err(e) => return Err(e),
     };
-    if !matches!(deployment.status.as_str(), "queued" | "building" | "deploying") {
+    if !matches!(
+        deployment.status.as_str(),
+        "queued" | "building" | "deploying"
+    ) {
         return Ok(());
     }
     let service = match services::get_service(&state.db, deployment.service_id).await {
@@ -121,7 +124,12 @@ async fn set_status(db: &PgPool, id: Uuid, status: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn pipeline(state: &SharedState, service: &Service, deployment: &Deployment, log: &DeployLog) -> anyhow::Result<()> {
+async fn pipeline(
+    state: &SharedState,
+    service: &Service,
+    deployment: &Deployment,
+    log: &DeployLog,
+) -> anyhow::Result<()> {
     let project = services::get_project(&state.db, service.project_id).await?;
     set_status(&state.db, deployment.id, "building").await?;
 
@@ -140,14 +148,21 @@ async fn pipeline(state: &SharedState, service: &Service, deployment: &Deploymen
         }
         (None, "app") => build(state, service, deployment, log).await?,
         (None, _) => {
-            let image = service.image.clone().ok_or_else(|| anyhow!("no image is set"))?;
+            let image = service
+                .image
+                .clone()
+                .ok_or_else(|| anyhow!("no image is set"))?;
             pull(state, &image, log).await?;
             image
         }
     };
-    sqlx::query!("UPDATE deployments SET image_ref = $2 WHERE id = $1", deployment.id, image)
-        .execute(&state.db)
-        .await?;
+    sqlx::query!(
+        "UPDATE deployments SET image_ref = $2 WHERE id = $1",
+        deployment.id,
+        image
+    )
+    .execute(&state.db)
+    .await?;
 
     release(state, service, &project, deployment, &image, log).await
 }
@@ -178,7 +193,12 @@ async fn ensure_builder(state: &SharedState, log: &DeployLog) -> anyhow::Result<
     docker::pull_image(&state.docker, image, |_| {}).await
 }
 
-async fn build(state: &SharedState, service: &Service, deployment: &Deployment, log: &DeployLog) -> anyhow::Result<String> {
+async fn build(
+    state: &SharedState,
+    service: &Service,
+    deployment: &Deployment,
+    log: &DeployLog,
+) -> anyhow::Result<String> {
     ensure_builder(state, log).await?;
     let tag = names::image(service.id, deployment.id);
     let repo = deployment
@@ -189,7 +209,14 @@ async fn build(state: &SharedState, service: &Service, deployment: &Deployment, 
 
     let mut env = vec![
         format!("JD_REPO_URL={repo}"),
-        format!("JD_BRANCH={}", deployment.branch.as_deref().or(service.branch.as_deref()).unwrap_or("main")),
+        format!(
+            "JD_BRANCH={}",
+            deployment
+                .branch
+                .as_deref()
+                .or(service.branch.as_deref())
+                .unwrap_or("main")
+        ),
         format!("JD_ROOT_DIR={}", service.root_dir),
         format!("JD_BUILD_TYPE={}", service.build_type),
         format!("JD_DOCKERFILE={}", service.dockerfile_path),
@@ -201,16 +228,22 @@ async fn build(state: &SharedState, service: &Service, deployment: &Deployment, 
     if let Some(token) = &service.git_token_enc {
         env.push(format!("JD_GIT_TOKEN={}", state.cipher.decrypt(token)?));
     }
-    let vars = services::env(state, service.id).await.map_err(|e| anyhow!("{e}"))?;
+    let vars = services::env(state, service.id)
+        .await
+        .map_err(|e| anyhow!("{e}"))?;
     env.push(format!(
         "JD_BUILD_ENV_KEYS={}",
-        vars.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(" ")
+        vars.iter()
+            .map(|(k, _)| k.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
     ));
     env.extend(vars.iter().map(|(k, v)| format!("{k}={v}")));
 
     let body = spec::helper(&state.config.builder_image, &["build.sh"], env, None, true);
     let name = format!("jd-build-{}", &deployment.id.simple().to_string()[..12]);
-    let code = docker::run_to_completion(&state.docker, &name, body, BUILD_TIMEOUT, log.sink()).await?;
+    let code =
+        docker::run_to_completion(&state.docker, &name, body, BUILD_TIMEOUT, log.sink()).await?;
     if code != 0 {
         bail!("the build exited with code {code}");
     }
@@ -231,7 +264,9 @@ async fn release(
     let network = names::project_network(project.id);
     docker::ensure_network(&state.docker, &network).await?;
     docker::ensure_network(&state.docker, &state.config.proxy_network).await?;
-    let volumes = services::volumes(&state.db, service.id).await.map_err(err)?;
+    let volumes = services::volumes(&state.db, service.id)
+        .await
+        .map_err(err)?;
     for volume in &volumes {
         docker::ensure_volume(&state.docker, &volume.name).await?;
     }
@@ -256,7 +291,10 @@ async fn release(
 
     let service_id = service.id.to_string();
     let pr = deployment.pr_number.map(|p| p.to_string());
-    let mut labels = vec![(LABEL_SERVICE, service_id.as_str()), (LABEL_KIND, deployment.kind.as_str())];
+    let mut labels = vec![
+        (LABEL_SERVICE, service_id.as_str()),
+        (LABEL_KIND, deployment.kind.as_str()),
+    ];
     if let Some(pr) = &pr {
         labels.push((LABEL_PR, pr.as_str()));
     }
@@ -365,7 +403,10 @@ async fn wait_healthy(
         if state.running == Some(true) && state.restarting != Some(true) {
             return Ok(());
         }
-        bail!("the container exited (code {})", state.exit_code.unwrap_or_default());
+        bail!(
+            "the container exited (code {})",
+            state.exit_code.unwrap_or_default()
+        );
     };
 
     ensure_builder(state, log).await?;
@@ -380,9 +421,22 @@ async fn wait_healthy(
         format!("JD_PATH={path}"),
         "JD_TIMEOUT=120".to_string(),
     ];
-    let body = spec::helper(&state.config.builder_image, &["healthcheck.sh"], env, Some(network), false);
+    let body = spec::helper(
+        &state.config.builder_image,
+        &["healthcheck.sh"],
+        env,
+        Some(network),
+        false,
+    );
     let name = format!("jd-check-{}", &deployment.id.simple().to_string()[..12]);
-    let code = docker::run_to_completion(&state.docker, &name, body, Duration::from_secs(180), log.sink()).await?;
+    let code = docker::run_to_completion(
+        &state.docker,
+        &name,
+        body,
+        Duration::from_secs(180),
+        log.sink(),
+    )
+    .await?;
     if code != 0 {
         bail!("the service did not become healthy; is it listening on 0.0.0.0:{port}?");
     }
