@@ -90,8 +90,10 @@ fn async_stream_logs(
                         .flatten()
                         .is_none_or(|s| !matches!(s.as_str(), "queued" | "building" | "deploying"));
                 if finished {
+                    // Browsers drop an event whose data is empty, so "end" must carry
+                    // some, or EventSource never learns the log is over and reconnects.
                     return Some((
-                        Ok(Event::default().event("end").data("")),
+                        Ok(Event::default().event("end").data("end")),
                         (state, after, true),
                     ));
                 }
