@@ -1,0 +1,223 @@
+[
+  {
+    "id": "vite-react",
+    "name": "Vite + React",
+    "category": "frontend",
+    "description": "A single-page React app built by Railpack and served as static files.",
+    "services": [
+      { "name": "web", "kind": "app", "root_dir": "examples/vite-react", "port": 8080, "public": true }
+    ]
+  },
+  {
+    "id": "nextjs",
+    "name": "Next.js",
+    "category": "frontend",
+    "description": "A Next.js app with server rendering, built by Railpack.",
+    "services": [
+      { "name": "web", "kind": "app", "root_dir": "examples/nextjs", "port": 8080, "public": true }
+    ]
+  },
+  {
+    "id": "static-site",
+    "name": "Static site",
+    "category": "frontend",
+    "description": "Plain HTML and CSS, served as-is.",
+    "services": [
+      { "name": "web", "kind": "app", "root_dir": "examples/static-site", "port": 8080, "public": true }
+    ]
+  },
+  {
+    "id": "express-api",
+    "name": "Express API",
+    "category": "backend",
+    "description": "A Node.js JSON API with Express, built by Railpack.",
+    "services": [
+      {
+        "name": "api",
+        "kind": "app",
+        "root_dir": "examples/express-api",
+        "port": 8080,
+        "public": true,
+        "health_path": "/health"
+      }
+    ]
+  },
+  {
+    "id": "fastapi",
+    "name": "FastAPI",
+    "category": "backend",
+    "description": "A Python API with FastAPI and Uvicorn, built by Railpack.",
+    "services": [
+      {
+        "name": "api",
+        "kind": "app",
+        "root_dir": "examples/fastapi",
+        "port": 8080,
+        "public": true,
+        "health_path": "/health"
+      }
+    ]
+  },
+  {
+    "id": "go-api",
+    "name": "Go API",
+    "category": "backend",
+    "description": "A Go net/http server built from its Dockerfile into a tiny image.",
+    "services": [
+      {
+        "name": "api",
+        "kind": "app",
+        "root_dir": "examples/go-api",
+        "port": 8080,
+        "public": true,
+        "health_path": "/health"
+      }
+    ]
+  },
+  {
+    "id": "rust-axum",
+    "name": "Rust + Axum",
+    "category": "backend",
+    "description": "A Rust API with Axum, built from its Dockerfile.",
+    "services": [
+      {
+        "name": "api",
+        "kind": "app",
+        "root_dir": "examples/rust-axum",
+        "port": 8080,
+        "public": true,
+        "health_path": "/health"
+      }
+    ]
+  },
+  {
+    "id": "fastapi-postgres",
+    "name": "FastAPI + PostgreSQL",
+    "category": "fullstack",
+    "description": "A todo API backed by PostgreSQL, connected through DATABASE_URL.",
+    "services": [
+      { "name": "db", "kind": "database", "engine": "postgres" },
+      {
+        "name": "api",
+        "kind": "app",
+        "root_dir": "examples/fastapi-postgres",
+        "port": 8080,
+        "public": true,
+        "health_path": "/health",
+        "env": { "DATABASE_URL": "${db.url}" }
+      }
+    ]
+  },
+  {
+    "id": "express-redis",
+    "name": "Express + Redis",
+    "category": "fullstack",
+    "description": "A visit counter in Node.js that keeps its count in Redis.",
+    "services": [
+      { "name": "cache", "kind": "database", "engine": "redis" },
+      {
+        "name": "api",
+        "kind": "app",
+        "root_dir": "examples/express-redis",
+        "port": 8080,
+        "public": true,
+        "health_path": "/health",
+        "env": { "REDIS_URL": "${cache.url}" }
+      }
+    ]
+  },
+  {
+    "id": "uptime-kuma",
+    "name": "Uptime Kuma",
+    "category": "selfhosted",
+    "description": "Uptime monitoring with status pages and alerts.",
+    "services": [
+      {
+        "name": "kuma",
+        "kind": "image",
+        "image": "louislam/uptime-kuma:1",
+        "port": 3001,
+        "public": true,
+        "volumes": ["/app/data"]
+      }
+    ]
+  },
+  {
+    "id": "n8n",
+    "name": "n8n",
+    "category": "selfhosted",
+    "description": "Workflow automation with a visual editor.",
+    "services": [
+      {
+        "name": "n8n",
+        "kind": "image",
+        "image": "n8nio/n8n:latest",
+        "port": 5678,
+        "public": true,
+        "volumes": ["/home/node/.n8n"],
+        "env": { "GENERIC_TIMEZONE": "UTC", "N8N_SECURE_COOKIE": "false" }
+      }
+    ]
+  },
+  {
+    "id": "umami",
+    "name": "Umami",
+    "category": "selfhosted",
+    "description": "Privacy-friendly web analytics, with its PostgreSQL database.",
+    "services": [
+      { "name": "db", "kind": "database", "engine": "postgres" },
+      {
+        "name": "umami",
+        "kind": "image",
+        "image": "ghcr.io/umami-software/umami:postgresql-latest",
+        "port": 3000,
+        "public": true,
+        "env": { "DATABASE_URL": "${db.url}", "APP_SECRET": "${random}" }
+      }
+    ]
+  },
+  {
+    "id": "adminer",
+    "name": "Adminer",
+    "category": "selfhosted",
+    "description": "A database UI. Deploy it into the project that holds your database and connect by service name.",
+    "services": [
+      { "name": "adminer", "kind": "image", "image": "adminer:latest", "port": 8080, "public": true }
+    ]
+  },
+  {
+    "id": "postgres",
+    "name": "PostgreSQL",
+    "category": "database",
+    "description": "PostgreSQL 17 with a persistent volume and generated credentials.",
+    "services": [{ "name": "postgres", "kind": "database", "engine": "postgres" }]
+  },
+  {
+    "id": "mysql",
+    "name": "MySQL",
+    "category": "database",
+    "description": "MySQL 8.4 LTS with a persistent volume and generated credentials.",
+    "services": [{ "name": "mysql", "kind": "database", "engine": "mysql" }]
+  },
+  {
+    "id": "mariadb",
+    "name": "MariaDB",
+    "category": "database",
+    "description": "MariaDB 11.8 LTS with a persistent volume and generated credentials.",
+    "services": [{ "name": "mariadb", "kind": "database", "engine": "mariadb" }]
+  },
+  {
+    "id": "redis",
+    "name": "Redis",
+    "category": "database",
+    "description": "Redis with password auth and snapshots to a persistent volume.",
+    "services": [{ "name": "redis", "kind": "database", "engine": "redis" }]
+  },
+  {
+    "id": "mongodb",
+    "name": "MongoDB",
+    "category": "database",
+    "description": "MongoDB 8 with a persistent volume and generated credentials.",
+    "services": [{ "name": "mongo", "kind": "database", "engine": "mongodb" }]
+  }
+]
