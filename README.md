@@ -630,6 +630,8 @@ through its width axis; JetBrains Mono appears only for machine data such as com
 and logs. A sidebar lists every project with a live status dot, so trouble shows from any page.
 Light and dark themes follow the system setting, with a switch in the sidebar; logs and the terminal
 stay dark in both. The tokens are in [`web/src/styles.css`](web/src/styles.css).
+Template cards show each technology's mark from [Simple Icons](https://simpleicons.org) (CC0), in its
+brand colour; marks too dark to read on dark surfaces use the text colour instead.
 
 ---
 
