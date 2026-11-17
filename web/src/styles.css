@@ -1,42 +1,94 @@
 @import "tailwindcss";
-@import "@fontsource-variable/inter";
+@import "@fontsource-variable/archivo/wdth.css";
 @import "@fontsource/jetbrains-mono/400.css";
 
 /*
- * Design tokens. Structure comes from a ladder of warm neutrals; brand red is
- * reserved for the wordmark; every action is warm charcoal; no shadows.
+ * justdeploy design tokens.
+ *
+ * Monochrome by intent: greys carry structure, actions are solid ink like the
+ * logo, and colour only ever means state (running, building, failed, stopped).
+ * One family, Archivo, whose width axis does the expressive work: page titles
+ * are set wide, everything else at normal width. Mono is for machine data only.
  */
-@theme {
-  --color-canvas: #ffffff;
-  --color-canvas-soft: #fbf9f8;
-  --color-canvas-tint: #f5f4f2;
-  --color-canvas-warm: #f1efed;
-  --color-hairline: #e4e1dd;
-  --color-divider: #e9e7e4;
-  --color-field: #d4cfca;
-  --color-ink-deep: #211e1c;
-  --color-ink: #161513;
-  --color-primary: #312d2a;
-  --color-primary-pressed: #47423e;
-  --color-brand: #c74634;
-  --color-gold: #f0cc71;
-  --color-gold-soft: #f7e0a1;
-  --color-link: #006b8f;
-  --color-focus: #227e9e;
-  --color-error: #d63b25;
-  --color-disabled: #aea8a2;
-  --color-forest: #33553c;
-  --color-teal: #d6e5e5;
 
-  --font-sans: "Inter Variable", system-ui, sans-serif;
-  --font-serif: Georgia, "Times New Roman", serif;
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+:root {
+  color-scheme: light;
+  --jd-page: #f5f6f8;
+  --jd-surface: #ffffff;
+  --jd-subtle: #eef0f3;
+  --jd-line: #e2e5ea;
+  --jd-line-strong: #c9ced6;
+  --jd-fg: #15181d;
+  --jd-muted: #5d6470;
+  --jd-faint: #8b929d;
+  --jd-on-fg: #ffffff;
+  --jd-ok: #15803d;
+  --jd-warn: #b45309;
+  --jd-err: #d92d20;
+  --jd-off: #9aa1ab;
+  --jd-focus: #2563eb;
+  /* Validated chart slots (light). */
+  --jd-series-1: #2a78d6;
+  --jd-series-2: #eb6834;
+  --jd-series-3: #1baf7a;
+  --jd-series-4: #6250d6;
+  --jd-track: #dbe7f8;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --jd-page: #0d0f12;
+  --jd-surface: #15181d;
+  --jd-subtle: #1c2026;
+  --jd-line: #262b33;
+  --jd-line-strong: #3a414c;
+  --jd-fg: #e9ecf0;
+  --jd-muted: #9aa3af;
+  --jd-faint: #6b7380;
+  --jd-on-fg: #0d0f12;
+  --jd-ok: #34c26b;
+  --jd-warn: #f0a330;
+  --jd-err: #f2675c;
+  --jd-off: #6b7380;
+  --jd-focus: #6aa2ff;
+  --jd-series-1: #3987e5;
+  --jd-series-2: #d95926;
+  --jd-series-3: #199e70;
+  --jd-series-4: #9085e9;
+  --jd-track: #1f2f45;
+}
+
+@theme inline {
+  --color-page: var(--jd-page);
+  --color-surface: var(--jd-surface);
+  --color-subtle: var(--jd-subtle);
+  --color-line: var(--jd-line);
+  --color-line-strong: var(--jd-line-strong);
+  --color-fg: var(--jd-fg);
+  --color-muted: var(--jd-muted);
+  --color-faint: var(--jd-faint);
+  --color-on-fg: var(--jd-on-fg);
+  --color-ok: var(--jd-ok);
+  --color-warn: var(--jd-warn);
+  --color-err: var(--jd-err);
+  --color-off: var(--jd-off);
+  --color-focus: var(--jd-focus);
+}
+
+@theme {
+  /* The console is dark in both themes. */
+  --color-console: #0f1115;
+  --color-console-fg: #e3e6ea;
+  --color-console-dim: #8a929e;
+  --color-console-accent: #f5c26b;
+
+  --font-sans: "Archivo Variable", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 
-  --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 15px;
+  --radius-control: 6px;
+  --radius-panel: 10px;
 }
 
 @layer base {
@@ -45,36 +97,74 @@
   }
   body {
     margin: 0;
-    background: var(--color-canvas-warm);
-    color: var(--color-ink);
+    background: var(--jd-page);
+    color: var(--jd-fg);
     font-family: var(--font-sans);
-    font-size: 16px;
-    font-weight: 400;
-    line-height: 1.4;
-    letter-spacing: 0;
+    font-size: 15px;
+    line-height: 1.5;
+    font-variation-settings: "wdth" 100;
+    -webkit-font-smoothing: antialiased;
   }
   h1,
   h2,
   h3,
   h4 {
-    line-height: 1.2;
     margin: 0;
+    line-height: 1.2;
   }
   a {
-    color: var(--color-link);
-    text-decoration: none;
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-color: var(--jd-line-strong);
+    text-underline-offset: 3px;
+  }
+  a:hover {
+    text-decoration-color: currentColor;
   }
   :focus-visible {
-    outline: 2px solid var(--color-focus);
+    outline: 2px solid var(--jd-focus);
     outline-offset: 2px;
   }
   code,
   pre {
     font-family: var(--font-mono);
   }
+  ::selection {
+    background: color-mix(in srgb, var(--jd-focus) 25%, transparent);
+  }
 }
 
-/* The dark sub-navigation scrolls sideways on phones instead of wrapping. */
+/* Page titles: the one expressive move. Archivo stretched to 125% width. */
+.title-wide {
+  font-variation-settings: "wdth" 125;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+/* Something is happening: the only ambient motion in the product. */
+@keyframes jd-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.pulse {
+  animation: jd-pulse 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pulse {
+    animation: none;
+  }
+}
+
+.thin-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--jd-line-strong) transparent;
+}
+
 .no-scrollbar {
   scrollbar-width: none;
 }
