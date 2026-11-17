@@ -46,9 +46,9 @@ export default function ProjectsPage() {
             Start from a template, or create a project and add an app from Git, a Docker image or a database.
           </EmptyState>
         ) : (
-          <ul className="overflow-hidden rounded-panel border border-line bg-surface">
+          <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {projects.data.map((project) => (
-              <ProjectRow key={project.id} project={project} />
+              <ProjectCard key={project.id} project={project} />
             ))}
           </ul>
         )}
@@ -58,8 +58,8 @@ export default function ProjectsPage() {
   );
 }
 
-/** One project per row: its services as a strip of live dots, then what matters. */
-function ProjectRow({ project }: { project: Project }) {
+/** One project per card: its services as live dots, then what matters. */
+function ProjectCard({ project }: { project: Project }) {
   const services = project.services;
   const trouble = services.filter((s) => s.status === "crashed" || s.status === "failed").length;
   const deploying = services.filter((s) => s.status === "deploying").length;
@@ -71,27 +71,31 @@ function ProjectRow({ project }: { project: Project }) {
     .at(-1);
 
   return (
-    <li className="border-b border-line last:border-b-0">
+    <li>
       <Link
         to={`/projects/${project.id}`}
-        className="grid gap-x-6 gap-y-2 px-5 py-4 no-underline hover:bg-subtle sm:grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(0,1fr)_17rem_9rem]"
+        className={cx(
+          "flex h-full flex-col rounded-panel border bg-surface no-underline hover:bg-subtle",
+          trouble ? "border-err/45" : "border-line hover:border-line-strong",
+        )}
       >
-        <div className="min-w-0">
-          <p className="font-semibold">{project.name}</p>
-          <p className="mt-0.5 truncate text-sm text-muted">
+        <div className="flex-1 px-5 pt-5 pb-4">
+          <div className="flex items-start justify-between gap-4">
+            <p className="min-w-0 truncate text-[17px] font-semibold">{project.name}</p>
+            <span className="mt-1.5 flex shrink-0 flex-wrap justify-end gap-1.5" aria-hidden>
+              {services.map((s) => (
+                <span key={s.id} title={`${s.name}: ${s.status}`}>
+                  <Dot status={s.status} className="size-2.5" />
+                </span>
+              ))}
+            </span>
+          </div>
+          <p className="mt-1 line-clamp-2 text-sm text-muted">
             {services.length === 0 ? "No services yet" : services.map((s) => s.name).join(", ")}
           </p>
         </div>
-
-        <div className="flex items-center gap-3 self-center" aria-label={`${running} of ${services.length} running`}>
-          <span className="flex shrink-0 gap-1.5">
-            {services.map((s) => (
-              <span key={s.id} title={`${s.name}: ${s.status}`}>
-                <Dot status={s.status} className="size-2.5" />
-              </span>
-            ))}
-          </span>
-          <span className={cx("whitespace-nowrap text-sm", trouble ? "font-medium text-err" : "text-muted")}>
+        <div className="flex items-center justify-between gap-3 border-t border-line px-5 py-3 text-sm">
+          <span className={trouble ? "font-medium text-err" : "text-muted"}>
             {trouble
               ? `${trouble} need${trouble === 1 ? "s" : ""} attention`
               : deploying
@@ -100,11 +104,8 @@ function ProjectRow({ project }: { project: Project }) {
                   ? "Empty"
                   : `${running} of ${services.length} running`}
           </span>
+          <span className="text-muted">{lastDeploy ? `Deployed ${timeAgo(lastDeploy)}` : "Never deployed"}</span>
         </div>
-
-        <p className="self-center text-sm text-muted md:text-right">
-          {lastDeploy ? `Deployed ${timeAgo(lastDeploy)}` : "Never deployed"}
-        </p>
       </Link>
     </li>
   );
