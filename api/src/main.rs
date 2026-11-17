@@ -8,6 +8,7 @@ mod docker;
 mod engines;
 mod error;
 mod handlers;
+mod host;
 mod metrics;
 mod models;
 mod names;

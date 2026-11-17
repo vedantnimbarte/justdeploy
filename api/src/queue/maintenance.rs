@@ -5,7 +5,7 @@ use crate::{
     backups,
     docker::{self, LABEL_KIND, LABEL_SERVICE},
     error::Result,
-    metrics, services,
+    host, metrics, services,
     state::SharedState,
 };
 use std::{collections::HashSet, future::Future, time::Duration};
@@ -23,6 +23,18 @@ pub fn spawn(state: SharedState) {
         "metrics",
         Duration::from_secs(30),
         metrics::sample,
+    );
+    every(
+        state.clone(),
+        "server metrics",
+        Duration::from_secs(30),
+        host::sample,
+    );
+    every(
+        state.clone(),
+        "docker disk usage",
+        Duration::from_secs(10 * 60),
+        host::refresh_docker_disk,
     );
     every(
         state.clone(),
@@ -115,6 +127,9 @@ async fn reconcile(state: SharedState) -> Result<()> {
 
 async fn cleanup(state: SharedState) -> Result<()> {
     sqlx::query!("DELETE FROM metric_samples WHERE ts < now() - interval '24 hours'")
+        .execute(&state.db)
+        .await?;
+    sqlx::query!("DELETE FROM host_samples WHERE ts < now() - interval '24 hours'")
         .execute(&state.db)
         .await?;
     sqlx::query!("DELETE FROM sessions WHERE expires_at < now()")
