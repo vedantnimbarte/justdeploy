@@ -183,9 +183,10 @@ async fn clone_service(
         r#"
         INSERT INTO services (id, project_id, name, kind, repo_url, branch, root_dir, git_token_enc,
             build_type, dockerfile_path, image, engine, port, public, health_path, cpu_millis,
-            memory_mb, webhook_secret, pre_deploy_command, cron_schedule)
+            memory_mb, webhook_secret, pre_deploy_command, cron_schedule, replicas, autoscale_min,
+            autoscale_max, autoscale_cpu, node_label)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-            $19, $20)
+            $19, $20, $21, $22, $23, $24, $25)
         RETURNING *
         "#,
         Uuid::new_v4(),
@@ -208,6 +209,11 @@ async fn clone_service(
         random_string(32),
         source.pre_deploy_command,
         source.cron_schedule,
+        source.replicas,
+        source.autoscale_min,
+        source.autoscale_max,
+        source.autoscale_cpu,
+        source.node_label,
     )
     .fetch_one(&mut *tx)
     .await?;
@@ -663,6 +669,67 @@ pub struct ServiceUpdate {
     pub pre_deploy_command: Option<String>,
     /// Some("") clears it, and the service stays up again.
     pub cron_schedule: Option<String>,
+    /// Copies to run; with autoscaling, where it starts.
+    pub replicas: Option<i32>,
+    /// Both set: autoscaling on, between them. Both null: off.
+    pub autoscale_min: Option<Option<i32>>,
+    pub autoscale_max: Option<Option<i32>>,
+    pub autoscale_cpu: Option<i32>,
+    /// The server (Swarm node id) to pin it to; null lets Swarm choose.
+    pub node_id: Option<Option<String>>,
+    /// `key=value`, or null for any server.
+    pub node_label: Option<Option<String>>,
+}
+
+pub struct Scaling {
+    pub replicas: i32,
+    pub min: Option<i32>,
+    pub max: Option<i32>,
+    pub cpu: i32,
+}
+
+/// One copy for anything with a volume, a host port or a schedule; between 1
+/// and 50 otherwise, with autoscaling bounds in order.
+fn validate_scaling(single: bool, scaling: &Scaling) -> Result<()> {
+    let autoscale = scaling.min.is_some() || scaling.max.is_some();
+    if single && (scaling.replicas != 1 || autoscale) {
+        return Err(bad_request(
+            "a service with a volume, a host port or a schedule runs exactly one copy",
+        ));
+    }
+    if !(1..=50).contains(&scaling.replicas) {
+        return Err(bad_request("copies must be between 1 and 50"));
+    }
+    match (scaling.min, scaling.max) {
+        (None, None) => {}
+        (Some(min), Some(max)) if 1 <= min && min <= max && max <= 50 => {}
+        (Some(_), Some(_)) => {
+            return Err(bad_request(
+                "autoscaling needs 1 ≤ fewest ≤ most ≤ 50 copies",
+            ))
+        }
+        _ => return Err(bad_request("autoscaling needs both a fewest and a most")),
+    }
+    if !(10..=100).contains(&scaling.cpu) {
+        return Err(bad_request(
+            "the CPU target must be between 10 and 100 percent",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_node_label(label: Option<&str>) -> Result<()> {
+    if let Some(label) = label {
+        let ok = label
+            .split_once('=')
+            .is_some_and(|(k, v)| !k.trim().is_empty() && !v.trim().is_empty());
+        if !ok {
+            return Err(bad_request(
+                "write the server label as key=value, like region=eu",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Saves settings, then redeploys: a source change rebuilds, anything else
@@ -737,6 +804,41 @@ pub async fn update_service(
         Some(v) => optional_text(Some(v)),
         None => current.pre_deploy_command.clone(),
     };
+    let volumes = volumes(&state.db, id).await?;
+    let single = current.kind == "database"
+        || !volumes.is_empty()
+        || public_port.is_some()
+        || cron_schedule.is_some();
+    let mut scaling = Scaling {
+        replicas: update.replicas.unwrap_or(current.replicas),
+        min: update.autoscale_min.unwrap_or(current.autoscale_min),
+        max: update.autoscale_max.unwrap_or(current.autoscale_max),
+        cpu: update.autoscale_cpu.unwrap_or(current.autoscale_cpu),
+    };
+    if single && update.replicas.is_none() {
+        // Turning on a host port or a schedule brings it back to one copy.
+        scaling.replicas = 1;
+        scaling.min = None;
+        scaling.max = None;
+    }
+    validate_scaling(single, &scaling)?;
+    if let (Some(min), Some(max)) = (scaling.min, scaling.max) {
+        scaling.replicas = scaling.replicas.clamp(min, max);
+    }
+    let node_id = update
+        .node_id
+        .map(|n| n.filter(|n| !n.is_empty()))
+        .unwrap_or(current.node_id.clone());
+    if !volumes.is_empty() && current.node_id.is_some() && node_id != current.node_id {
+        return Err(bad_request(
+            "its data lives on its server, and justdeploy can't move volumes between servers",
+        ));
+    }
+    let node_label = update
+        .node_label
+        .map(optional_text)
+        .unwrap_or(current.node_label.clone());
+    validate_node_label(node_label.as_deref())?;
     let git_token_enc = match update.git_token.as_deref() {
         None => current.git_token_enc.clone(),
         Some("") => None,
@@ -750,7 +852,9 @@ pub async fn update_service(
             repo_url = $2, branch = $3, root_dir = $4, git_token_enc = $5, build_type = $6,
             dockerfile_path = $7, image = $8, port = $9, public = $10, health_path = $11,
             cpu_millis = $12, memory_mb = $13, public_port = $14, preview_enabled = $15,
-            pre_deploy_command = $16, cron_schedule = $17, updated_at = now()
+            pre_deploy_command = $16, cron_schedule = $17, replicas = $18, autoscale_min = $19,
+            autoscale_max = $20, autoscale_cpu = $21, node_id = $22, node_label = $23,
+            updated_at = now()
         WHERE id = $1
         RETURNING *
         "#,
@@ -778,6 +882,12 @@ pub async fn update_service(
         preview,
         pre_deploy_command,
         cron_schedule,
+        scaling.replicas,
+        scaling.min,
+        scaling.max,
+        scaling.cpu,
+        node_id,
+        node_label,
     )
     .fetch_one(&state.db)
     .await
@@ -1393,5 +1503,35 @@ mod tests {
         assert!(validate_limits(None, None).is_ok());
         assert!(validate_limits(Some(1), None).is_err());
         assert!(validate_limits(None, Some(1)).is_err());
+    }
+}
+
+#[cfg(test)]
+mod scaling_tests {
+    use super::*;
+
+    fn scaling(replicas: i32, min: Option<i32>, max: Option<i32>) -> Scaling {
+        Scaling {
+            replicas,
+            min,
+            max,
+            cpu: 70,
+        }
+    }
+
+    #[test]
+    fn copies_and_autoscaling_bounds_are_checked() {
+        assert!(validate_scaling(false, &scaling(3, None, None)).is_ok());
+        assert!(validate_scaling(false, &scaling(2, Some(1), Some(5))).is_ok());
+        assert!(validate_scaling(false, &scaling(0, None, None)).is_err());
+        assert!(validate_scaling(false, &scaling(2, Some(5), Some(1))).is_err());
+        assert!(validate_scaling(false, &scaling(2, Some(1), None)).is_err());
+        assert!(
+            validate_scaling(true, &scaling(2, None, None)).is_err(),
+            "volumes run one copy"
+        );
+        assert!(validate_scaling(true, &scaling(1, None, None)).is_ok());
+        assert!(validate_node_label(Some("region=eu")).is_ok());
+        assert!(validate_node_label(Some("region")).is_err());
     }
 }

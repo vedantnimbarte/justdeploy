@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        UPDATE services SET\n            repo_url = $2, branch = $3, root_dir = $4, git_token_enc = $5, build_type = $6,\n            dockerfile_path = $7, image = $8, port = $9, public = $10, health_path = $11,\n            cpu_millis = $12, memory_mb = $13, public_port = $14, preview_enabled = $15,\n            pre_deploy_command = $16, cron_schedule = $17, updated_at = now()\n        WHERE id = $1\n        RETURNING *\n        ",
+  "query": "\n        UPDATE services SET\n            repo_url = $2, branch = $3, root_dir = $4, git_token_enc = $5, build_type = $6,\n            dockerfile_path = $7, image = $8, port = $9, public = $10, health_path = $11,\n            cpu_millis = $12, memory_mb = $13, public_port = $14, preview_enabled = $15,\n            pre_deploy_command = $16, cron_schedule = $17, replicas = $18, autoscale_min = $19,\n            autoscale_max = $20, autoscale_cpu = $21, node_id = $22, node_label = $23,\n            updated_at = now()\n        WHERE id = $1\n        RETURNING *\n        ",
   "describe": {
     "columns": [
       {
@@ -288,6 +288,72 @@
             "name": "cron_schedule"
           }
         }
+      },
+      {
+        "ordinal": 26,
+        "name": "replicas",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "replicas"
+          }
+        }
+      },
+      {
+        "ordinal": 27,
+        "name": "autoscale_min",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "autoscale_min"
+          }
+        }
+      },
+      {
+        "ordinal": 28,
+        "name": "autoscale_max",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "autoscale_max"
+          }
+        }
+      },
+      {
+        "ordinal": 29,
+        "name": "autoscale_cpu",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "autoscale_cpu"
+          }
+        }
+      },
+      {
+        "ordinal": 30,
+        "name": "node_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "node_id"
+          }
+        }
+      },
+      {
+        "ordinal": 31,
+        "name": "node_label",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "node_label"
+          }
+        }
       }
     ],
     "parameters": {
@@ -307,6 +373,12 @@
         "Int4",
         "Int4",
         "Bool",
+        "Text",
+        "Text",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Int4",
         "Text",
         "Text"
       ]
@@ -337,8 +409,14 @@
       false,
       false,
       true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      true,
       true
     ]
   },
-  "hash": "acbcd1ffeaab2f07617804e88fb31438eee2d928fbf493ed0c5592cd143910e0"
+  "hash": "313e0b119dd99795dbaada2fb1b6f0dbe47dc47c9dd584fc8de014cbcc5db488"
 }

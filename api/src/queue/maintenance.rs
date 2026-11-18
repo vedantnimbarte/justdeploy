@@ -2,7 +2,7 @@
 //! scheduled backups and runs, and clean up old data.
 
 use crate::{
-    backups,
+    backups, cluster,
     docker::{self, LABEL_KIND, LABEL_SERVICE},
     error::Result,
     host, metrics, notify, runs, services,
@@ -44,6 +44,18 @@ pub fn spawn(state: SharedState) {
     );
     every(
         state.clone(),
+        "cluster",
+        Duration::from_secs(60),
+        cluster::refresh,
+    );
+    every(
+        state.clone(),
+        "autoscaling",
+        Duration::from_secs(60),
+        cluster::autoscale,
+    );
+    every(
+        state.clone(),
         "scheduled runs",
         Duration::from_secs(60),
         runs::schedule_due,
@@ -68,10 +80,13 @@ where
     });
 }
 
-/// Brings Docker back in line with the database: removes containers of deleted
-/// services, restarts stopped ones, and redeploys a service whose container is
-/// gone (removed by hand, or lost with a pruned host).
+/// Brings the Swarm back in line with the database: removes what belongs to
+/// deleted services, scales stopped ones to nothing, and redeploys a service
+/// whose workload is gone, or that still runs as a plain container from before
+/// the cluster (that's how an upgrade moves services onto it). Swarm itself
+/// restarts copies that exit and moves them off servers that go down.
 async fn reconcile(state: SharedState) -> Result<()> {
+    let workloads = docker::workloads(&state.docker, &[]).await?;
     let containers = docker::list(&state.docker, &[]).await?;
     let services = sqlx::query!(
         r#"SELECT s.id, s.name, s.desired_state, s.current_deployment_id,
@@ -89,13 +104,22 @@ async fn reconcile(state: SharedState) -> Result<()> {
     .into_iter()
     .collect();
 
-    for container in &containers {
-        let service = docker::label(container, LABEL_SERVICE).and_then(|s| s.parse::<Uuid>().ok());
-        if service.is_some_and(|id| !known.contains(&id)) {
-            if let Some(id) = &container.id {
-                tracing::info!(container = %id, "removing a container whose service no longer exists");
-                docker::remove(&state.docker, id).await?;
-            }
+    let orphan = |label: Option<&str>| {
+        label
+            .and_then(|s| s.parse::<Uuid>().ok())
+            .is_some_and(|id| !known.contains(&id))
+    };
+    for w in workloads.iter().filter(|w| orphan(w.label(LABEL_SERVICE))) {
+        tracing::info!(workload = %w.name, "removing a workload whose service no longer exists");
+        docker::remove_service(&state.docker, &w.name).await?;
+    }
+    for container in containers
+        .iter()
+        .filter(|c| orphan(docker::label(c, LABEL_SERVICE)))
+    {
+        if let Some(id) = &container.id {
+            tracing::info!(container = %id, "removing a container whose service no longer exists");
+            docker::remove(&state.docker, id).await?;
         }
     }
 
@@ -105,46 +129,44 @@ async fn reconcile(state: SharedState) -> Result<()> {
             continue;
         }
         let id = row.id.to_string();
-        let production: Vec<_> = containers
+        let production: Vec<_> = workloads
+            .iter()
+            .filter(|w| w.label(LABEL_SERVICE) == Some(id.as_str()))
+            .filter(|w| w.label(LABEL_KIND) == Some("production"))
+            .collect();
+        let legacy = containers
             .iter()
             .filter(|c| docker::label(c, LABEL_SERVICE) == Some(id.as_str()))
-            .filter(|c| docker::label(c, LABEL_KIND) == Some("production"))
-            .collect();
+            .any(|c| docker::label(c, LABEL_KIND) == Some("production"));
         match row.desired_state.as_str() {
             "running" if production.is_empty() => {
-                tracing::warn!(service = %row.id, "container missing; redeploying");
+                if legacy {
+                    tracing::info!(service = %row.id, "moving onto the cluster");
+                } else {
+                    tracing::warn!(service = %row.id, "workload missing; redeploying");
+                }
                 let service = services::get_service(&state.db, row.id).await?;
                 services::rerelease(&state, &service, "reconcile").await?;
             }
             "running" => {
-                let down: Vec<_> = production
-                    .iter()
-                    .filter(|c| !docker::is_running(c))
-                    .collect();
-                if !down.is_empty() && notify::first_in_an_hour(row.id) {
+                let down = production.iter().all(|w| w.running == 0 && w.desired > 0);
+                if down && notify::first_in_an_hour(row.id) {
                     notify::send(
                         &state,
                         notify::Event {
                             kind: "service.crashed",
                             text: format!(
-                                "{} in {} crashed and is being restarted.",
+                                "{} in {} has no copy running; the cluster keeps restarting it.",
                                 row.name, row.project
                             ),
                             path: format!("/services/{}?tab=logs", row.id),
                         },
                     );
                 }
-                for container in down {
-                    if let Some(cid) = &container.id {
-                        let _ = docker::start(&state.docker, cid).await;
-                    }
-                }
             }
             "stopped" => {
-                for container in production.iter().filter(|c| docker::is_running(c)) {
-                    if let Some(cid) = &container.id {
-                        docker::stop(&state.docker, cid).await?;
-                    }
+                for w in production.iter().filter(|w| w.desired > 0) {
+                    docker::scale(&state.docker, &w.name, 0).await?;
                 }
             }
             _ => {}

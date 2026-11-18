@@ -6,6 +6,7 @@
 //! memory or on the control plane's disk.
 
 use crate::{
+    cluster,
     docker::{self, spec, LABEL_KIND, LABEL_SERVICE},
     engines,
     error::{bad_request, Error, Result},
@@ -432,17 +433,14 @@ pub async fn start_restore(state: &SharedState, backup_id: Uuid) -> Result<()> {
 }
 
 /// The running production container of a service.
-async fn live_container(state: &SharedState, service: &Service) -> anyhow::Result<String> {
-    let id = service.id.to_string();
-    docker::list(
-        &state.docker,
-        &[(LABEL_SERVICE, &id), (LABEL_KIND, "production")],
-    )
-    .await?
-    .into_iter()
-    .find(docker::is_running)
-    .and_then(|c| c.id)
-    .ok_or_else(|| anyhow!("the database is not running"))
+/// The database's running copy, on whichever server it is.
+async fn live_container(
+    state: &SharedState,
+    service: &Service,
+) -> anyhow::Result<(bollard::Docker, String)> {
+    cluster::running_container(state, service.id)
+        .await?
+        .ok_or_else(|| anyhow!("the database is not running"))
 }
 
 pub async fn run_backup(state: &SharedState, backup_id: Uuid) -> Result<()> {
@@ -513,10 +511,9 @@ async fn dump(
     store: Arc<dyn ObjectStore>,
     path: &Path,
 ) -> anyhow::Result<u64> {
-    let container = live_container(state, service).await?;
+    let (docker, container) = live_container(state, service).await?;
     let command = engines::dump_command(engine.id).ok_or_else(|| anyhow!("no dump command"))?;
-    let exec = state
-        .docker
+    let exec = docker
         .create_exec(
             &container,
             CreateExecOptions {
@@ -527,8 +524,7 @@ async fn dump(
             },
         )
         .await?;
-    let StartExecResults::Attached { mut output, .. } =
-        state.docker.start_exec(&exec.id, None).await?
+    let StartExecResults::Attached { mut output, .. } = docker.start_exec(&exec.id, None).await?
     else {
         bail!("could not attach to the dump");
     };
@@ -542,12 +538,7 @@ async fn dump(
             _ => {}
         }
     }
-    let code = state
-        .docker
-        .inspect_exec(&exec.id)
-        .await?
-        .exit_code
-        .unwrap_or(-1);
+    let code = docker.inspect_exec(&exec.id).await?.exit_code.unwrap_or(-1);
     if code != 0 {
         drop(writer);
         let _ = store.delete(path).await;
@@ -626,10 +617,10 @@ pub async fn run_restore(state: &SharedState, backup_id: Uuid) -> Result<()> {
         if engine.id == "redis" {
             restore_redis(state, &service, store, &path).await
         } else {
-            let container = live_container(state, &service).await?;
+            let (docker, container) = live_container(state, &service).await?;
             let command =
                 engines::restore_command(engine.id).ok_or_else(|| anyhow!("no restore command"))?;
-            restore_into(state, &container, command, store, &path).await
+            restore_into(&docker, &container, command, store, &path).await
         }
     }
     .await;
@@ -679,7 +670,7 @@ pub async fn restore_latest(
     let config = load_destination(state, latest.destination_id).await?;
     let (store, prefix) = open_store(state, &config)?;
     let path = Path::from(format!("{prefix}{}", latest.object_key));
-    restore_into(state, container, command, store, &path).await?;
+    restore_into(&state.docker, container, command, store, &path).await?;
     Ok(true)
 }
 
@@ -692,7 +683,7 @@ const RESTORE_FILE: &str = "/tmp/jd-restore.gz";
 /// Windows named pipe (Docker Desktop) does not deliver, which leaves the restore
 /// command waiting forever. Every database image ships gzip.
 async fn restore_into(
-    state: &SharedState,
+    docker: &bollard::Docker,
     container: &str,
     command: &str,
     store: Arc<dyn ObjectStore>,
@@ -716,8 +707,7 @@ async fn restore_into(
     let options = bollard::query_parameters::UploadToContainerOptionsBuilder::new()
         .path("/tmp")
         .build();
-    state
-        .docker
+    docker
         .upload_to_container(container, Some(options), bollard::body_stream(body))
         .await
         .context("copying the backup into the container")?;
@@ -725,8 +715,7 @@ async fn restore_into(
     let script = format!(
         "gzip -dc {RESTORE_FILE} | {command}; status=$?; rm -f {RESTORE_FILE}; exit $status"
     );
-    let exec = state
-        .docker
+    let exec = docker
         .create_exec(
             container,
             CreateExecOptions {
@@ -737,8 +726,7 @@ async fn restore_into(
             },
         )
         .await?;
-    let StartExecResults::Attached { mut output, .. } =
-        state.docker.start_exec(&exec.id, None).await?
+    let StartExecResults::Attached { mut output, .. } = docker.start_exec(&exec.id, None).await?
     else {
         bail!("could not attach to the restore");
     };
@@ -751,12 +739,7 @@ async fn restore_into(
     tokio::time::timeout(Duration::from_secs(60 * 60), collect)
         .await
         .context("the restore did not finish within an hour")?;
-    let code = state
-        .docker
-        .inspect_exec(&exec.id)
-        .await?
-        .exit_code
-        .unwrap_or(-1);
+    let code = docker.inspect_exec(&exec.id).await?.exit_code.unwrap_or(-1);
     if code != 0 {
         bail!(
             "restore exited with code {code}: {}",
@@ -790,14 +773,24 @@ fn tar_header(name: &str, size: u64) -> anyhow::Result<[u8; 512]> {
 }
 
 /// Redis loads its data from dump.rdb at start, so: stop it, swap the file using
-/// a helper with the volume mounted, and start it again.
+/// a helper with the volume mounted on its server, and start it again.
 async fn restore_redis(
     state: &SharedState,
     service: &Service,
     store: Arc<dyn ObjectStore>,
     path: &Path,
 ) -> anyhow::Result<()> {
-    let container = live_container(state, service).await?;
+    let id = service.id.to_string();
+    let labels = [(LABEL_SERVICE, id.as_str()), (LABEL_KIND, "production")];
+    let workload = docker::workloads(&state.docker, &labels)
+        .await?
+        .into_iter()
+        .next();
+    let node = service
+        .node_id
+        .clone()
+        .unwrap_or_else(|| cluster::self_node().to_string());
+    let docker = cluster::node_docker(state, &node)?;
     let volume = services::volumes(&state.db, service.id)
         .await
         .map_err(|e| anyhow!("{e}"))?
@@ -805,7 +798,20 @@ async fn restore_redis(
         .next()
         .ok_or_else(|| anyhow!("redis has no data volume"))?;
 
-    docker::stop(&state.docker, &container).await?;
+    // Stopped through the Swarm (a stopped copy would just be restarted), or
+    // directly for a container from before the cluster.
+    let legacy = match &workload {
+        Some(w) => {
+            docker::scale(&state.docker, &w.name, 0).await?;
+            docker::wait_stopped(&state.docker, &w.name).await;
+            None
+        }
+        None => {
+            let (_, container) = live_container(state, service).await?;
+            docker::stop(&docker, &container).await?;
+            Some(container)
+        }
+    };
     let helper_name = format!("jd-restore-{}", &service.id.simple().to_string()[..12]);
     let mut body = spec::helper(
         &state.config.builder_image,
@@ -817,10 +823,14 @@ async fn restore_redis(
     if let Some(host) = body.host_config.as_mut() {
         host.binds = Some(vec![format!("{}:/data", volume.name)]);
     }
-    let helper = docker::create_and_start(&state.docker, &helper_name, body).await?;
-    let result = restore_into(state, &helper, "cat > /data/dump.rdb", store, path).await;
-    docker::remove(&state.docker, &helper).await?;
-    docker::start(&state.docker, &container).await?;
+    let helper = docker::create_and_start(&docker, &helper_name, body).await?;
+    let result = restore_into(&docker, &helper, "cat > /data/dump.rdb", store, path).await;
+    docker::remove(&docker, &helper).await?;
+    match (&workload, legacy) {
+        (Some(w), _) => docker::scale(&state.docker, &w.name, 1).await?,
+        (None, Some(container)) => docker::start(&docker, &container).await?,
+        _ => {}
+    }
     result
 }
 

@@ -72,6 +72,11 @@ const NAV = [
     icon: icon(<path d="M3.5 3.5h5v5h-5zm8 0h5v5h-5zm-8 8h5v5h-5zm8 2.5h5M14 11.5v5" />),
   },
   {
+    to: "/servers",
+    label: "Servers",
+    icon: icon(<path d="M3.5 3.5h13v5h-13zm0 8h13v5h-13zM6 6h.01M6 14h.01" />),
+  },
+  {
     to: "/team",
     label: "Team",
     icon: icon(<path d="M7.5 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm-5 8a5 5 0 0 1 10 0M13 3.5a3 3 0 0 1 0 5.5m2 8a5 5 0 0 0-3-4.6" />),

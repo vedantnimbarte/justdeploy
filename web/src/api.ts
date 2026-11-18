@@ -78,6 +78,15 @@ export interface Service {
   preview_enabled: boolean;
   pre_deploy_command: string | null;
   cron_schedule: string | null;
+  /** Copies to run now; autoscaling moves it between the bounds. */
+  replicas: number;
+  autoscale_min: number | null;
+  autoscale_max: number | null;
+  autoscale_cpu: number;
+  /** The server (Swarm node id) it's pinned to. */
+  node_id: string | null;
+  /** key=value: only servers with that label. */
+  node_label: string | null;
   desired_state: "running" | "stopped" | "deleting";
   current_deployment_id: string | null;
   created_at: string;
@@ -86,6 +95,8 @@ export interface Service {
   connection_url: string | null;
   has_git_token: boolean;
   latest_deployment: Deployment | null;
+  copies_running: number;
+  copies_desired: number;
 }
 
 export interface Project {
@@ -222,6 +233,32 @@ export interface GithubRepo {
   clone_url: string;
   default_branch: string;
   private: boolean;
+}
+
+export interface ClusterServer {
+  id: string;
+  hostname: string;
+  role: "manager" | "worker";
+  leader: boolean;
+  /** The server justdeploy runs on. */
+  this: boolean;
+  state: "ready" | "down" | "unknown" | "disconnected";
+  availability: "active" | "drain" | "pause";
+  address: string;
+  cpus: number;
+  memory_bytes: number;
+  platform: string;
+  docker_version: string;
+  labels: Record<string, string>;
+  tasks: number;
+  usage: {
+    cpu_percent: number;
+    memory_used: number;
+    memory_total: number;
+    disk_used: number;
+    disk_total: number;
+    sampled_at: string;
+  } | null;
 }
 
 export interface DnsCheck {

@@ -226,6 +226,8 @@ fn describe(method: &str, route: &str) -> Option<&'static str> {
         ("POST", "/invites") => "sent an invite",
         ("DELETE", "/invites/{id}") => "revoked the invite for",
         ("POST", "/github/app") => "connected a GitHub App",
+        ("PATCH", "/servers/{id}") => "changed server",
+        ("DELETE", "/servers/{id}") => "removed server",
         ("DELETE", "/github/app") => "disconnected the GitHub App",
         _ => return None,
     })
@@ -233,11 +235,15 @@ fn describe(method: &str, route: &str) -> Option<&'static str> {
 
 /// What a path names, in words: `shop/web` for a service, an email for a person.
 async fn target_name(state: &SharedState, path: &str) -> String {
-    let mut parts = path.trim_start_matches("/api/v1/").split('/');
+    // Inside the API router the path has no /api/v1 prefix; outside it does.
+    let mut parts = path
+        .trim_start_matches("/api/v1")
+        .trim_start_matches('/')
+        .split('/');
     let kind = parts.next().unwrap_or_default();
     let id = parts.next().unwrap_or_default();
     let Ok(uuid) = id.parse::<Uuid>() else {
-        return if kind == "templates" {
+        return if matches!(kind, "templates" | "servers") {
             id.to_string()
         } else {
             String::new()

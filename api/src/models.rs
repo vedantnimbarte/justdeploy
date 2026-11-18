@@ -47,6 +47,17 @@ pub struct Service {
     pub pre_deploy_command: Option<String>,
     /// Five-field cron, UTC. Set: the service runs on this schedule instead of staying up.
     pub cron_schedule: Option<String>,
+    /// Copies running now. Autoscaling moves it between the two bounds below.
+    pub replicas: i32,
+    pub autoscale_min: Option<i32>,
+    /// Set: autoscaling is on.
+    pub autoscale_max: Option<i32>,
+    /// Average CPU per copy to aim for, in percent of its limit (or of one core).
+    pub autoscale_cpu: i32,
+    /// The server (Swarm node id) it is pinned to; always set once a service has a volume.
+    pub node_id: Option<String>,
+    /// `key=value`: run only on servers with that label.
+    pub node_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

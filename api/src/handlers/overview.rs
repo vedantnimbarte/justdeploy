@@ -1,10 +1,10 @@
 //! The system overview on the home page: the server, all apps together, platform
 //! activity, Docker's disk usage, and anything that needs attention.
 
-use super::projects::{latest_deployment, status};
+use super::projects::{copies, latest_deployment, status};
 use crate::{
     auth::Viewer,
-    docker::{self, LABEL_KIND, LABEL_SERVICE},
+    cluster,
     error::Result,
     host::{self, DockerDisk},
     models::Service,
@@ -190,9 +190,13 @@ pub async fn overview(
 }
 
 async fn server(state: &SharedState) -> Result<Option<Server>> {
-    let rows = sqlx::query!("SELECT * FROM host_samples ORDER BY ts DESC LIMIT 2")
-        .fetch_all(&state.db)
-        .await?;
+    // The server justdeploy runs on; the Servers page shows the others.
+    let rows = sqlx::query!(
+        "SELECT * FROM host_samples WHERE node_id = $1 ORDER BY ts DESC LIMIT 2",
+        cluster::self_node()
+    )
+    .fetch_all(&state.db)
+    .await?;
     let Some(last) = rows.first() else {
         return Ok(None);
     };
@@ -229,7 +233,7 @@ async fn series(state: &SharedState, minutes: i32, cores: i32) -> Result<Vec<Poi
             SELECT date_bin(make_interval(secs => $2), ts, TIMESTAMPTZ '2000-01-01') AS b,
                    avg(cpu_percent) AS cpu, avg(memory_used)::bigint AS mem,
                    max(net_rx_bytes) AS rx, max(net_tx_bytes) AS tx
-            FROM host_samples WHERE ts > now() - make_interval(mins => $1)
+            FROM host_samples WHERE ts > now() - make_interval(mins => $1) AND node_id = $3
             GROUP BY 1
         ), per_sample AS (
             SELECT ts, sum(cpu_percent) AS cpu, sum(memory_bytes) AS mem
@@ -246,7 +250,8 @@ async fn series(state: &SharedState, minutes: i32, cores: i32) -> Result<Vec<Poi
         ORDER BY h.b
         "#,
         minutes,
-        bucket as f64
+        bucket as f64,
+        cluster::self_node()
     )
     .fetch_all(&state.db)
     .await?;
@@ -329,17 +334,13 @@ async fn platform(state: &SharedState) -> Result<(Platform, Vec<(Uuid, String, S
             .into_iter()
             .map(|r| (r.id, r.name))
             .collect();
-    let containers = docker::list(&state.docker, &[(LABEL_KIND, "production")]).await?;
+    let copies = copies(state).await?;
     let mut crashed = Vec::new();
     for service in services {
-        let id = service.id.to_string();
-        let mine: Vec<_> = containers
-            .iter()
-            .filter(|c| docker::label(c, LABEL_SERVICE) == Some(id.as_str()))
-            .collect();
+        let mine = copies.get(&service.id).copied().unwrap_or_default();
         let latest = latest_deployment(state, service.id).await?;
         p.services += 1;
-        match status(&service, latest.as_ref(), &mine).as_str() {
+        match status(&service, latest.as_ref(), mine).as_str() {
             "running" | "scheduled" => p.running += 1,
             "deploying" => p.deploying += 1,
             "crashed" => {

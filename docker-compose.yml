@@ -18,6 +18,7 @@ services:
       JD_ACME_EMAIL: ${JD_ACME_EMAIL:-}
       JD_BUILDER_IMAGE: ${JD_BUILDER_IMAGE:-ghcr.io/vedantnimbarte/justdeploy-builder:latest}
       JD_DEPLOY_WORKERS: ${JD_DEPLOY_WORKERS:-2}
+      JD_ADVERTISE_ADDR: ${JD_ADVERTISE_ADDR:-}
     ports:
       - "${JD_PORT:-8080}:8080"
     volumes:
@@ -48,6 +49,9 @@ services:
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
       - --providers.docker.network=jd-proxy
+      - --providers.swarm.endpoint=unix:///var/run/docker.sock
+      - --providers.swarm.exposedbydefault=false
+      - --providers.swarm.network=jd-mesh
       - --entrypoints.web.address=:80
     ports:
       - "80:80"

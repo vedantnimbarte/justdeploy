@@ -7,8 +7,12 @@ use crate::{
     names,
 };
 use bollard::models::{
-    ContainerCreateBody, EndpointSettings, HostConfig, HostConfigLogConfig, Mount, MountType,
-    NetworkingConfig, PortBinding, RestartPolicy, RestartPolicyNameEnum,
+    ContainerCreateBody, EndpointPortConfig, EndpointPortConfigPublishModeEnum, EndpointSettings,
+    EndpointSpec, HostConfig, HostConfigLogConfig, Limit, Mount, MountType,
+    NetworkAttachmentConfig, NetworkingConfig, RestartPolicy, RestartPolicyNameEnum, ServiceSpec,
+    ServiceSpecMode, ServiceSpecModeReplicated, TaskSpec, TaskSpecContainerSpec, TaskSpecLogDriver,
+    TaskSpecPlacement, TaskSpecResources, TaskSpecRestartPolicy,
+    TaskSpecRestartPolicyConditionEnum,
 };
 use std::collections::HashMap;
 
@@ -18,16 +22,23 @@ pub struct Release<'a> {
     pub deployment: &'a Deployment,
     pub image: &'a str,
     pub env: &'a [(String, String)],
-    /// Hostnames routed to this container; empty for private services.
+    /// Hostnames routed to this deployment; empty for private services.
     pub hosts: &'a [String],
     pub volumes: &'a [Volume],
     pub project_network: &'a str,
+    /// The overlay Traefik reaches routed services on.
     pub proxy_network: &'a str,
     pub tls: bool,
+    /// Copies to run.
+    pub replicas: i64,
+    /// Swarm placement constraints, like `node.id==abc`.
+    pub constraints: Vec<String>,
 }
 
 impl Release<'_> {
-    pub fn container_name(&self) -> String {
+    /// The Swarm service's name: one per deployment, so a new one starts beside
+    /// the old and takes over once it's healthy.
+    pub fn name(&self) -> String {
         names::container(self.project_name, &self.service.name, self.deployment.id)
     }
 
@@ -35,10 +46,8 @@ impl Release<'_> {
         !self.hosts.is_empty() && self.service.port.is_some()
     }
 
-    pub fn body(&self) -> ContainerCreateBody {
+    fn labels(&self) -> HashMap<String, String> {
         let service = self.service;
-        let pr = self.deployment.pr_number;
-
         let mut labels = HashMap::from([
             (MANAGED.to_string(), "true".to_string()),
             (LABEL_PROJECT.to_string(), service.project_id.to_string()),
@@ -46,9 +55,20 @@ impl Release<'_> {
             (LABEL_DEPLOYMENT.to_string(), self.deployment.id.to_string()),
             (LABEL_KIND.to_string(), self.deployment.kind.clone()),
         ]);
-        if let Some(pr) = pr {
+        if let Some(pr) = self.deployment.pr_number {
             labels.insert(LABEL_PR.to_string(), pr.to_string());
         }
+        labels
+    }
+
+    pub fn spec(&self) -> ServiceSpec {
+        let service = self.service;
+        let pr = self.deployment.pr_number;
+
+        // Copies carry the same jd labels as the service, so their containers
+        // can be found on whichever server they land.
+        let container_labels = self.labels();
+        let mut labels = self.labels();
         if let (true, Some(port)) = (self.routed(), service.port) {
             let router = names::router(self.deployment.id);
             labels.extend(traefik_labels(
@@ -59,7 +79,7 @@ impl Release<'_> {
                 self.tls,
             ));
             // The newest deployment wins as soon as Traefik sees it, so traffic
-            // moves over before the previous container is stopped.
+            // moves over before the previous one is removed.
             labels.insert(
                 format!("traefik.http.routers.{router}.priority"),
                 self.deployment.created_at.timestamp().to_string(),
@@ -74,64 +94,87 @@ impl Release<'_> {
         }
 
         // The service name is an alias on the project network, so siblings reach
-        // it as `api:8080` no matter which deployment is live. Previews get none,
-        // so they never answer for production.
-        let mut endpoints = HashMap::from([(
-            self.project_network.to_string(),
-            EndpointSettings {
-                aliases: pr.is_none().then(|| vec![service.name.clone()]),
-                ..Default::default()
-            },
-        )]);
+        // it as `api:8080` whichever deployment is live. Previews get none, so
+        // they never answer for production.
+        let mut networks = vec![NetworkAttachmentConfig {
+            target: Some(self.project_network.to_string()),
+            aliases: pr.is_none().then(|| vec![service.name.clone()]),
+            ..Default::default()
+        }];
         if self.routed() {
-            endpoints.insert(self.proxy_network.to_string(), EndpointSettings::default());
+            networks.push(NetworkAttachmentConfig {
+                target: Some(self.proxy_network.to_string()),
+                ..Default::default()
+            });
         }
 
-        let mut exposed = None;
-        let mut port_bindings = None;
-        if let (Some(host_port), Some(port), None) = (service.public_port, service.port, pr) {
-            let key = format!("{port}/tcp");
-            exposed = Some(vec![key.clone()]);
-            port_bindings = Some(HashMap::from([(
-                key,
-                Some(vec![PortBinding {
-                    host_ip: Some("0.0.0.0".into()),
-                    host_port: Some(host_port.to_string()),
+        let endpoint_spec = match (service.public_port, service.port, pr) {
+            (Some(host_port), Some(port), None) => Some(EndpointSpec {
+                ports: Some(vec![EndpointPortConfig {
+                    target_port: Some(port as i64),
+                    published_port: Some(host_port as i64),
+                    publish_mode: Some(EndpointPortConfigPublishModeEnum::INGRESS),
+                    ..Default::default()
                 }]),
-            )]));
-        }
-
-        ContainerCreateBody {
-            image: Some(self.image.to_string()),
-            env: Some(env),
-            labels: Some(labels),
-            cmd: service.engine.as_deref().and_then(engines::command),
-            exposed_ports: exposed,
-            host_config: Some(HostConfig {
-                restart_policy: Some(RestartPolicy {
-                    name: Some(RestartPolicyNameEnum::UNLESS_STOPPED),
-                    maximum_retry_count: None,
-                }),
-                nano_cpus: service.cpu_millis.map(|m| m as i64 * 1_000_000),
-                memory: service.memory_mb.map(|m| m as i64 * 1024 * 1024),
-                mounts: Some(
-                    self.volumes
-                        .iter()
-                        .map(|v| Mount {
-                            target: Some(v.mount_path.clone()),
-                            source: Some(v.name.clone()),
-                            typ: Some(MountType::VOLUME),
-                            ..Default::default()
-                        })
-                        .collect(),
-                ),
-                port_bindings,
-                log_config: Some(bounded_logs()),
                 ..Default::default()
             }),
-            networking_config: Some(NetworkingConfig {
-                endpoints_config: Some(endpoints),
+            _ => None,
+        };
+
+        let logs = bounded_logs();
+        ServiceSpec {
+            name: Some(self.name()),
+            labels: Some(labels),
+            task_template: Some(TaskSpec {
+                container_spec: Some(TaskSpecContainerSpec {
+                    image: Some(self.image.to_string()),
+                    env: Some(env),
+                    labels: Some(container_labels),
+                    args: service.engine.as_deref().and_then(engines::command),
+                    mounts: Some(
+                        self.volumes
+                            .iter()
+                            .map(|v| Mount {
+                                target: Some(v.mount_path.clone()),
+                                source: Some(v.name.clone()),
+                                typ: Some(MountType::VOLUME),
+                                ..Default::default()
+                            })
+                            .collect(),
+                    ),
+                    ..Default::default()
+                }),
+                resources: Some(TaskSpecResources {
+                    limits: Some(Limit {
+                        nano_cpus: service.cpu_millis.map(|m| m as i64 * 1_000_000),
+                        memory_bytes: service.memory_mb.map(|m| m as i64 * 1024 * 1024),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                restart_policy: Some(TaskSpecRestartPolicy {
+                    condition: Some(TaskSpecRestartPolicyConditionEnum::ANY),
+                    delay: Some(5_000_000_000),
+                    ..Default::default()
+                }),
+                placement: Some(TaskSpecPlacement {
+                    constraints: Some(self.constraints.clone()),
+                    ..Default::default()
+                }),
+                networks: Some(networks),
+                log_driver: Some(TaskSpecLogDriver {
+                    name: logs.typ,
+                    options: logs.config,
+                }),
+                ..Default::default()
             }),
+            mode: Some(ServiceSpecMode {
+                replicated: Some(ServiceSpecModeReplicated {
+                    replicas: Some(self.replicas),
+                }),
+                ..Default::default()
+            }),
+            endpoint_spec,
             ..Default::default()
         }
     }
@@ -152,7 +195,7 @@ pub fn traefik_labels(
     let mut labels = HashMap::from([
         ("traefik.enable".to_string(), "true".to_string()),
         (
-            "traefik.docker.network".to_string(),
+            "traefik.swarm.network".to_string(),
             proxy_network.to_string(),
         ),
         (format!("traefik.http.routers.{router}.rule"), rule),
@@ -321,7 +364,7 @@ pub fn one_off(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use chrono::Utc;
     use uuid::Uuid;
@@ -376,7 +419,7 @@ mod tests {
         );
     }
 
-    fn service() -> Service {
+    pub(crate) fn service() -> Service {
         Service {
             id: Uuid::nil(),
             project_id: Uuid::nil(),
@@ -404,6 +447,12 @@ mod tests {
             updated_at: Utc::now(),
             pre_deploy_command: None,
             cron_schedule: None,
+            replicas: 2,
+            autoscale_min: None,
+            autoscale_max: None,
+            autoscale_cpu: 70,
+            node_id: None,
+            node_label: None,
         }
     }
 
@@ -442,17 +491,27 @@ mod tests {
             hosts,
             volumes: &[],
             project_network: "jd-proj-1",
-            proxy_network: "jd-proxy",
+            proxy_network: "jd-mesh",
             tls: false,
+            replicas: 2,
+            constraints: vec!["node.id==n1".into()],
         }
     }
 
+    fn container(spec: &ServiceSpec) -> TaskSpecContainerSpec {
+        spec.task_template.clone().unwrap().container_spec.unwrap()
+    }
+
+    fn networks(spec: &ServiceSpec) -> Vec<NetworkAttachmentConfig> {
+        spec.task_template.clone().unwrap().networks.unwrap()
+    }
+
     #[test]
-    fn public_service_gets_routed_with_its_port_and_limits() {
+    fn public_service_gets_routed_with_its_port_limits_copies_and_placement() {
         let (s, d) = (service(), deployment(None));
         let hosts = vec!["api-shop.example.com".to_string()];
-        let body = release(&s, &d, &hosts).body();
-        let labels = body.labels.unwrap();
+        let spec = release(&s, &d, &hosts).spec();
+        let labels = spec.labels.clone().unwrap();
         let router = names::router(d.id);
         assert_eq!(
             labels[&format!("traefik.http.routers.{router}.rule")],
@@ -463,44 +522,67 @@ mod tests {
             d.created_at.timestamp().to_string(),
             "newer deployments must outrank older ones"
         );
+        assert_eq!(labels["traefik.swarm.network"], "jd-mesh");
+        assert!(container(&spec)
+            .env
+            .unwrap()
+            .contains(&"PORT=8080".to_string()));
         assert_eq!(
-            labels[&format!("traefik.http.services.{router}.loadbalancer.server.port")],
-            "8080"
+            container(&spec).labels.unwrap()[LABEL_SERVICE],
+            s.id.to_string()
         );
-        assert!(body.env.unwrap().contains(&"PORT=8080".to_string()));
-        let host = body.host_config.unwrap();
-        assert_eq!(host.nano_cpus, Some(500_000_000));
-        assert_eq!(host.memory, Some(256 * 1024 * 1024));
-        let endpoints = body.networking_config.unwrap().endpoints_config.unwrap();
-        assert!(endpoints.contains_key("jd-proxy"));
+        let task = spec.task_template.clone().unwrap();
+        let limits = task.resources.unwrap().limits.unwrap();
+        assert_eq!(limits.nano_cpus, Some(500_000_000));
+        assert_eq!(limits.memory_bytes, Some(256 * 1024 * 1024));
         assert_eq!(
-            endpoints["jd-proj-1"].aliases,
-            Some(vec!["api".to_string()])
+            task.placement.unwrap().constraints,
+            Some(vec!["node.id==n1".into()])
         );
+        assert_eq!(
+            spec.mode.clone().unwrap().replicated.unwrap().replicas,
+            Some(2)
+        );
+        let nets = networks(&spec);
+        assert_eq!(nets[0].aliases, Some(vec!["api".to_string()]));
+        assert_eq!(nets[1].target.as_deref(), Some("jd-mesh"));
     }
 
     #[test]
     fn private_service_has_no_route_and_stays_off_the_proxy_network() {
         let (s, d) = (service(), deployment(None));
-        let body = release(&s, &d, &[]).body();
-        assert!(!body.labels.unwrap().contains_key("traefik.enable"));
-        let endpoints = body.networking_config.unwrap().endpoints_config.unwrap();
-        assert!(!endpoints.contains_key("jd-proxy"));
+        let spec = release(&s, &d, &[]).spec();
+        assert!(!spec.labels.unwrap().contains_key("traefik.enable"));
+        assert_eq!(networks(&release(&s, &d, &[]).spec()).len(), 1);
     }
 
     #[test]
     fn previews_route_only_their_own_host_and_get_no_alias() {
         let (s, d) = (service(), deployment(Some(4)));
         let hosts = vec!["pr-4-api-shop.example.com".to_string()];
-        let body = release(&s, &d, &hosts).body();
-        let labels = body.labels.unwrap();
+        let spec = release(&s, &d, &hosts).spec();
+        let labels = spec.labels.clone().unwrap();
         assert_eq!(labels[LABEL_PR], "4");
         assert_eq!(
             labels[&format!("traefik.http.routers.{}.rule", names::router(d.id))],
             "Host(`pr-4-api-shop.example.com`)"
         );
-        let endpoints = body.networking_config.unwrap().endpoints_config.unwrap();
-        assert_eq!(endpoints["jd-proj-1"].aliases, None);
+        assert_eq!(networks(&spec)[0].aliases, None);
+    }
+
+    #[test]
+    fn host_ports_publish_through_the_swarm() {
+        let mut s = service();
+        s.public_port = Some(15432);
+        let d = deployment(None);
+        let ports = release(&s, &d, &[])
+            .spec()
+            .endpoint_spec
+            .unwrap()
+            .ports
+            .unwrap();
+        assert_eq!(ports[0].published_port, Some(15432));
+        assert_eq!(ports[0].target_port, Some(8080));
     }
 
     #[test]

@@ -4,13 +4,18 @@ pub mod spec;
 
 use anyhow::{anyhow, Result};
 use bollard::{
+    auth::DockerCredentials,
     container::LogOutput,
     errors::Error as DockerError,
-    models::{ContainerCreateBody, ContainerSummary, NetworkCreateRequest, VolumeCreateRequest},
+    models::{
+        ContainerCreateBody, ContainerSummary, NetworkCreateRequest, ServiceSpec, ServiceSpecMode,
+        ServiceSpecModeReplicated, Task, TaskState, VolumeCreateRequest,
+    },
     query_parameters::{
         CreateContainerOptionsBuilder, CreateImageOptionsBuilder, ListContainersOptionsBuilder,
-        LogsOptionsBuilder, RemoveContainerOptionsBuilder, RemoveImageOptionsBuilder,
-        StopContainerOptionsBuilder,
+        ListServicesOptionsBuilder, ListTasksOptionsBuilder, LogsOptionsBuilder,
+        RemoveContainerOptionsBuilder, RemoveImageOptionsBuilder, StopContainerOptionsBuilder,
+        UpdateServiceOptionsBuilder,
     },
     Docker,
 };
@@ -44,7 +49,15 @@ fn is_conflict(error: &DockerError) -> bool {
     )
 }
 
+/// A network that spans the cluster. Attachable, so plain containers (builds,
+/// health checks, runs) can join it as well as Swarm services.
 pub async fn ensure_network(docker: &Docker, name: &str) -> Result<()> {
+    ensure_overlay(docker, name, false).await
+}
+
+/// `encrypted` turns on IPsec between servers, for traffic that must not be read
+/// on the wire (the control plane talking to each server's Docker).
+pub async fn ensure_overlay(docker: &Docker, name: &str, encrypted: bool) -> Result<()> {
     match docker.inspect_network(name, None).await {
         Ok(_) => return Ok(()),
         Err(e) if is_not_found(&e) => {}
@@ -52,7 +65,9 @@ pub async fn ensure_network(docker: &Docker, name: &str) -> Result<()> {
     }
     let request = NetworkCreateRequest {
         name: name.to_string(),
-        driver: Some("bridge".into()),
+        driver: Some("overlay".into()),
+        attachable: Some(true),
+        options: encrypted.then(|| HashMap::from([("encrypted".to_string(), String::new())])),
         labels: Some(HashMap::from([(MANAGED.to_string(), "true".to_string())])),
         ..Default::default()
     };
@@ -123,8 +138,18 @@ pub async fn remove_image(docker: &Docker, image: &str) {
     }
 }
 
-/// Containers carrying every given label (`key=value`).
+/// Plain containers (not copies of a Swarm service) carrying every given label
+/// (`key=value`): helpers, preview databases, and services from before the cluster.
 pub async fn list(docker: &Docker, labels: &[(&str, &str)]) -> Result<Vec<ContainerSummary>> {
+    Ok(list_all(docker, labels)
+        .await?
+        .into_iter()
+        .filter(|c| label(c, "com.docker.swarm.task.id").is_none())
+        .collect())
+}
+
+/// Every container carrying the labels, Swarm copies included.
+pub async fn list_all(docker: &Docker, labels: &[(&str, &str)]) -> Result<Vec<ContainerSummary>> {
     let mut filter: Vec<String> = vec![format!("{MANAGED}=true")];
     filter.extend(labels.iter().map(|(k, v)| format!("{k}={v}")));
     let filters = HashMap::from([("label", filter)]);
@@ -180,8 +205,190 @@ pub async fn remove(docker: &Docker, id: &str) -> Result<()> {
     }
 }
 
-/// The last lines a container printed, for explaining why it failed.
-pub async fn tail_logs(docker: &Docker, id: &str, lines: usize) -> Vec<String> {
+// ---------------------------------------------------------------- Swarm services
+
+/// A Swarm service justdeploy runs, with how many of its copies are up.
+#[derive(Debug, Clone)]
+pub struct Workload {
+    pub name: String,
+    pub labels: HashMap<String, String>,
+    pub running: u64,
+    pub desired: u64,
+}
+
+impl Workload {
+    pub fn label(&self, key: &str) -> Option<&str> {
+        self.labels.get(key).map(String::as_str)
+    }
+}
+
+/// Services carrying every given label (`key=value`), with their task counts.
+pub async fn workloads(docker: &Docker, labels: &[(&str, &str)]) -> Result<Vec<Workload>> {
+    let mut filter: Vec<String> = vec![format!("{MANAGED}=true")];
+    filter.extend(labels.iter().map(|(k, v)| format!("{k}={v}")));
+    let filters = HashMap::from([("label", filter)]);
+    let options = ListServicesOptionsBuilder::new()
+        .filters(&filters)
+        .status(true)
+        .build();
+    Ok(docker
+        .list_services(Some(options))
+        .await?
+        .into_iter()
+        .map(|s| {
+            let spec = s.spec.unwrap_or_default();
+            let status = s.service_status.unwrap_or_default();
+            Workload {
+                name: spec.name.unwrap_or_default(),
+                labels: spec.labels.unwrap_or_default(),
+                running: status.running_tasks.unwrap_or(0),
+                desired: status.desired_tasks.unwrap_or(0),
+            }
+        })
+        .collect())
+}
+
+/// Creates a service, replacing one of the same name left over from a crash.
+/// `credentials` reach every server that pulls its image.
+pub async fn create_service(
+    docker: &Docker,
+    spec: ServiceSpec,
+    credentials: Option<DockerCredentials>,
+) -> Result<String> {
+    if let Some(name) = &spec.name {
+        remove_service(docker, name).await?;
+    }
+    let created = docker.create_service(spec, credentials).await?;
+    Ok(created.id.unwrap_or_default())
+}
+
+pub async fn remove_service(docker: &Docker, name: &str) -> Result<()> {
+    match docker.delete_service(name).await {
+        Err(e) if !is_not_found(&e) => Err(e.into()),
+        _ => Ok(()),
+    }
+}
+
+/// Tags a local image for the registry and pushes it there.
+pub async fn push(
+    docker: &Docker,
+    local: &str,
+    remote: &str,
+    credentials: DockerCredentials,
+) -> Result<()> {
+    let (repo, tag) = remote
+        .rsplit_once(':')
+        .ok_or_else(|| anyhow!("{remote} has no tag"))?;
+    let options = bollard::query_parameters::TagImageOptionsBuilder::new()
+        .repo(repo)
+        .tag(tag)
+        .build();
+    docker.tag_image(local, Some(options)).await?;
+    let options = bollard::query_parameters::PushImageOptionsBuilder::new()
+        .tag(tag)
+        .build();
+    let mut stream = docker.push_image(repo, Some(options), Some(credentials));
+    while let Some(item) = stream.next().await {
+        let info = item.map_err(|e| anyhow!("pushing {remote} failed: {e}"))?;
+        if let Some(detail) = info.error_detail.and_then(|d| d.message) {
+            return Err(anyhow!("pushing {remote} failed: {detail}"));
+        }
+    }
+    Ok(())
+}
+
+/// Sets how many copies of a service run.
+pub async fn scale(docker: &Docker, name: &str, replicas: i64) -> Result<()> {
+    let current = docker.inspect_service(name, None).await?;
+    let version = current.version.and_then(|v| v.index).unwrap_or(0);
+    let mut spec = current.spec.unwrap_or_default();
+    spec.mode = Some(ServiceSpecMode {
+        replicated: Some(ServiceSpecModeReplicated {
+            replicas: Some(replicas),
+        }),
+        ..Default::default()
+    });
+    let options = UpdateServiceOptionsBuilder::new()
+        .version(version as i32)
+        .build();
+    docker.update_service(name, spec, options, None).await?;
+    Ok(())
+}
+
+/// After scaling a service to nothing, waits (up to half a minute) for its
+/// copies to stop, so a volume is never used by two at once.
+pub async fn wait_stopped(docker: &Docker, service: &str) {
+    for _ in 0..30 {
+        match tasks(docker, service).await {
+            Ok(tasks) if !tasks.iter().any(task_running) => return,
+            Err(_) => return,
+            _ => tokio::time::sleep(Duration::from_secs(1)).await,
+        }
+    }
+}
+
+/// Ids of the servers in the cluster that are up.
+pub async fn ready_nodes(docker: &Docker) -> Result<Vec<String>> {
+    Ok(docker
+        .list_nodes(None::<bollard::query_parameters::ListNodesOptions>)
+        .await?
+        .into_iter()
+        .filter(|n| {
+            n.status.as_ref().and_then(|s| s.state) == Some(bollard::models::NodeState::READY)
+        })
+        .filter_map(|n| n.id)
+        .collect())
+}
+
+/// Every task of a service, current and past.
+pub async fn tasks(docker: &Docker, service: &str) -> Result<Vec<Task>> {
+    let filters = HashMap::from([("service", vec![service.to_string()])]);
+    let options = ListTasksOptionsBuilder::new().filters(&filters).build();
+    Ok(docker.list_tasks(Some(options)).await?)
+}
+
+pub fn task_running(task: &Task) -> bool {
+    task.status.as_ref().and_then(|s| s.state) == Some(TaskState::RUNNING)
+}
+
+/// Waits until `replicas` copies of a service run. A copy that fails or can't
+/// be placed ends the wait with Swarm's reason.
+pub async fn wait_running(
+    docker: &Docker,
+    service: &str,
+    replicas: i64,
+    timeout: Duration,
+) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let tasks = tasks(docker, service).await?;
+        if tasks.iter().filter(|t| task_running(t)).count() as i64 >= replicas {
+            return Ok(());
+        }
+        for task in &tasks {
+            let status = task.status.clone().unwrap_or_default();
+            if matches!(status.state, Some(TaskState::FAILED | TaskState::REJECTED)) {
+                let why = status.err.or(status.message).unwrap_or_default();
+                return Err(anyhow!("a copy failed to start: {why}"));
+            }
+        }
+        if tokio::time::Instant::now() > deadline {
+            let pending = tasks
+                .iter()
+                .filter_map(|t| t.status.as_ref()?.err.clone())
+                .next()
+                .unwrap_or_else(|| "no server could take it".into());
+            return Err(anyhow!(
+                "not running after {} seconds: {pending}",
+                timeout.as_secs()
+            ));
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+/// The last lines a service printed, across its copies.
+pub async fn service_tail_logs(docker: &Docker, service: &str, lines: usize) -> Vec<String> {
     let options = LogsOptionsBuilder::new()
         .stdout(true)
         .stderr(true)
@@ -189,7 +396,7 @@ pub async fn tail_logs(docker: &Docker, id: &str, lines: usize) -> Vec<String> {
         .build();
     let mut splitter = LineSplitter::default();
     let mut out = Vec::new();
-    let mut stream = docker.logs(id, Some(options));
+    let mut stream = docker.service_logs(service, Some(options));
     while let Some(Ok(chunk)) = stream.next().await {
         out.extend(splitter.push(&output_bytes(&chunk)));
     }

@@ -56,6 +56,13 @@ else
   echo "Keeping the existing $DIR/.env"
 fi
 
+# Every install is a Docker Swarm, so more servers can join later. On a server
+# with several addresses, other servers reach this one on $ip.
+if [ "$(docker info --format '{{.Swarm.LocalNodeState}}')" != "active" ]; then
+  docker swarm init --advertise-addr "$ip" >/dev/null
+  echo "Started a Docker Swarm on this server ($ip)"
+fi
+
 files="-f docker-compose.yml"
 if grep -q '^JD_ACME_EMAIL=.' .env; then
   files="$files -f docker-compose.tls.yml"
@@ -68,5 +75,5 @@ docker compose $files up -d
 
 url=$(grep '^JD_PUBLIC_URL=' .env | cut -d= -f2-)
 echo
-echo "justdeploy is running. Open $url to create the admin account."
+echo "justdeploy is running. Open $url to create the owner account."
 echo "Upgrade later with: cd $DIR && docker compose $files pull && docker compose $files up -d"

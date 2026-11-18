@@ -2,6 +2,7 @@
 
 use crate::{
     auth::{Can, Member, Viewer},
+    cluster,
     docker::{self, LABEL_KIND, LABEL_SERVICE},
     error::{bad_request, Result},
     metrics, services,
@@ -115,22 +116,38 @@ pub async fn runtime_logs(
     Path(id): Path<Uuid>,
     Query(query): Query<LogQuery>,
 ) -> Result<EventStream> {
-    let container = live_container(&state, id).await?;
-    let Some(container) = container else {
-        let once = futures::stream::once(async {
-            Ok::<_, Infallible>(Event::default().data("(no running container)"))
-        });
-        return Ok(Sse::new(once).into_response());
-    };
+    services::get_service(&state.db, id).await?;
     let options = LogsOptionsBuilder::new()
         .follow(true)
         .stdout(true)
         .stderr(true)
         .tail(&query.tail.unwrap_or(300).min(5000).to_string())
         .build();
+    // Every copy's output, wherever it runs, comes through the Swarm. A plain
+    // container from before the cluster is read directly.
+    let sid = id.to_string();
+    let labels = [(LABEL_SERVICE, sid.as_str()), (LABEL_KIND, "production")];
+    let workload = docker::workloads(&state.docker, &labels)
+        .await?
+        .into_iter()
+        .next();
     let docker = state.docker.clone();
-    let stream = docker
-        .logs(&container, Some(options))
+    let source = match workload {
+        Some(w) => docker.service_logs(&w.name, Some(options)).boxed(),
+        None => match cluster::running_container(&state, id)
+            .await
+            .map_err(crate::error::Error::Internal)?
+        {
+            Some((docker, container)) => docker.logs(&container, Some(options)).boxed(),
+            None => {
+                let once = futures::stream::once(async {
+                    Ok::<_, Infallible>(Event::default().data("(no running copy)"))
+                });
+                return Ok(Sse::new(once).into_response());
+            }
+        },
+    };
+    let stream = source
         .scan(docker::LineSplitter::default(), |splitter, chunk| {
             let lines = match chunk {
                 Ok(chunk) => splitter.push(&docker::output_bytes(&chunk)),
@@ -143,19 +160,6 @@ pub async fn runtime_logs(
     Ok(Sse::new(stream)
         .keep_alive(KeepAlive::default())
         .into_response())
-}
-
-async fn live_container(state: &SharedState, service_id: Uuid) -> Result<Option<String>> {
-    services::get_service(&state.db, service_id).await?;
-    let id = service_id.to_string();
-    Ok(docker::list(
-        &state.docker,
-        &[(LABEL_SERVICE, &id), (LABEL_KIND, "production")],
-    )
-    .await?
-    .into_iter()
-    .find(docker::is_running)
-    .and_then(|c| c.id))
 }
 
 #[derive(Deserialize)]
@@ -188,10 +192,11 @@ pub async fn terminal(
     Path(id): Path<Uuid>,
     ws: WebSocketUpgrade,
 ) -> Result<Response> {
-    let container = live_container(&state, id)
-        .await?
-        .ok_or_else(|| bad_request("the service has no running container"))?;
     let service = services::get_service(&state.db, id).await?;
+    let (docker, container) = cluster::running_container(&state, id)
+        .await
+        .map_err(crate::error::Error::Internal)?
+        .ok_or_else(|| bad_request("the service has no running copy"))?;
     Ok(ws.on_upgrade(move |socket| async move {
         let actor = Some(user.email.as_str());
         services::audit(
@@ -202,7 +207,7 @@ pub async fn terminal(
             None,
         )
         .await;
-        if let Err(error) = run_terminal(&state, &container, socket).await {
+        if let Err(error) = run_terminal(&docker, &container, socket).await {
             tracing::warn!(%error, "terminal session ended with an error");
         }
         services::audit(
@@ -217,12 +222,11 @@ pub async fn terminal(
 }
 
 async fn run_terminal(
-    state: &SharedState,
+    docker: &bollard::Docker,
     container: &str,
     socket: WebSocket,
 ) -> anyhow::Result<()> {
-    let exec = state
-        .docker
+    let exec = docker
         .create_exec(
             container,
             CreateExecOptions {
@@ -243,7 +247,7 @@ async fn run_terminal(
     let StartExecResults::Attached {
         mut output,
         mut input,
-    } = state.docker.start_exec(&exec.id, None).await?
+    } = docker.start_exec(&exec.id, None).await?
     else {
         anyhow::bail!("could not attach");
     };
@@ -272,7 +276,7 @@ async fn run_terminal(
                             .h(size.rows.into())
                             .w(size.cols.into())
                             .build();
-                        let _ = state.docker.resize_exec(&exec.id, options).await;
+                        let _ = docker.resize_exec(&exec.id, options).await;
                     }
                 }
                 Message::Close(_) => break,

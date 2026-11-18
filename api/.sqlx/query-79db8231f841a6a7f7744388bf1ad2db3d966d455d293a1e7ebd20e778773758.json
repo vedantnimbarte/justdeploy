@@ -288,6 +288,72 @@
             "name": "cron_schedule"
           }
         }
+      },
+      {
+        "ordinal": 26,
+        "name": "replicas",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "replicas"
+          }
+        }
+      },
+      {
+        "ordinal": 27,
+        "name": "autoscale_min",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "autoscale_min"
+          }
+        }
+      },
+      {
+        "ordinal": 28,
+        "name": "autoscale_max",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "autoscale_max"
+          }
+        }
+      },
+      {
+        "ordinal": 29,
+        "name": "autoscale_cpu",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "autoscale_cpu"
+          }
+        }
+      },
+      {
+        "ordinal": 30,
+        "name": "node_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "node_id"
+          }
+        }
+      },
+      {
+        "ordinal": 31,
+        "name": "node_label",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "node_label"
+          }
+        }
       }
     ],
     "parameters": {
@@ -319,6 +385,12 @@
       false,
       true,
       false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
       false,
       true,
       true

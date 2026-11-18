@@ -18,8 +18,6 @@ pub struct Config {
     pub cookie_secure: bool,
     /// Image that clones and builds apps, and runs health checks.
     pub builder_image: String,
-    /// Docker network Traefik watches.
-    pub proxy_network: String,
     /// Repository that code templates build from.
     pub templates_repo: String,
     pub templates_branch: String,
@@ -29,6 +27,9 @@ pub struct Config {
     pub backup_dir: PathBuf,
     /// Deploys (builds included) that run at once, each for a different service.
     pub deploy_workers: usize,
+    /// The address other servers reach this one on, when Docker can't pick one
+    /// (a server with several addresses) while starting the Swarm.
+    pub advertise_addr: Option<String>,
 }
 
 impl Config {
@@ -52,7 +53,6 @@ impl Config {
                 "JD_BUILDER_IMAGE",
                 "ghcr.io/vedantnimbarte/justdeploy-builder:latest",
             ),
-            proxy_network: optional("JD_PROXY_NETWORK", "jd-proxy"),
             templates_repo: optional(
                 "JD_TEMPLATES_REPO",
                 "https://github.com/vedantnimbarte/justdeploy",
@@ -65,6 +65,9 @@ impl Config {
                 .ok()
                 .filter(|n| *n > 0)
                 .context("JD_DEPLOY_WORKERS must be a whole number above 0")?,
+            advertise_addr: std::env::var("JD_ADVERTISE_ADDR")
+                .ok()
+                .filter(|v| !v.is_empty()),
         })
     }
 

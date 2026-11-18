@@ -66,7 +66,13 @@ pub fn container(project: &str, service: &str, deployment: Uuid) -> String {
     format!("jd-{project}-{service}-{}", short(deployment))
 }
 
+/// A project's overlay network, across the cluster.
 pub fn project_network(project: Uuid) -> String {
+    format!("jd-net-{}", short(project))
+}
+
+/// The bridge network projects had before the cluster, removed with the project.
+pub fn legacy_project_network(project: Uuid) -> String {
     format!("jd-proj-{}", short(project))
 }
 
@@ -89,8 +95,14 @@ pub fn image(service: Uuid, deployment: Uuid) -> String {
     format!("jd-{}:{}", service.simple(), short(deployment))
 }
 
+/// An image justdeploy built, held locally (`jd-…`) or in the cluster's registry (`registry.…/jd-…`).
 pub fn is_built_image(image: &str) -> bool {
-    image.starts_with("jd-")
+    image.starts_with("jd-") || image.contains("/jd-")
+}
+
+/// The Swarm service of the agent that lets the control plane reach a server's Docker.
+pub fn node_agent(node_id: &str) -> String {
+    format!("jd-node-{}", &node_id[..node_id.len().min(12)])
 }
 
 /// Traefik router and service name, one per deployment. Two containers sharing a

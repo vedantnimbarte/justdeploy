@@ -9,7 +9,7 @@
 //! scheduled service stops there: its image is ready, and runs start from it.
 
 use crate::{
-    backups,
+    backups, cluster,
     docker::{self, spec, LABEL_DEPLOYMENT, LABEL_KIND, LABEL_PR, LABEL_PROJECT, LABEL_SERVICE},
     error::{Error, Result},
     github,
@@ -307,6 +307,13 @@ async fn build(
     if code != 0 {
         bail!("the build exited with code {code}");
     }
+    let registry = cluster::registry(state).await.map_err(|e| anyhow!("{e}"))?;
+    if let Some((host, credentials)) = registry {
+        let remote = format!("{host}/{tag}");
+        log.line("==> Pushing to the cluster's registry, so every server can run it");
+        docker::push(&state.docker, &tag, &remote, credentials).await?;
+        return Ok(remote);
+    }
     Ok(tag)
 }
 
@@ -323,13 +330,24 @@ async fn release(
 
     let network = names::project_network(project.id);
     docker::ensure_network(&state.docker, &network).await?;
-    docker::ensure_network(&state.docker, &state.config.proxy_network).await?;
     let volumes = services::volumes(&state.db, service.id)
         .await
         .map_err(err)?;
-    for volume in &volumes {
-        docker::ensure_volume(&state.docker, &volume.name).await?;
+    let exclusive = !volumes.is_empty() || service.public_port.is_some();
+    let mut service = service.clone();
+    if !volumes.is_empty() && service.node_id.is_none() {
+        // A volume lives on one server; the service stays with it from now on.
+        let node = cluster::self_node().to_string();
+        sqlx::query!(
+            "UPDATE services SET node_id = $2 WHERE id = $1",
+            service.id,
+            node
+        )
+        .execute(&state.db)
+        .await?;
+        service.node_id = Some(node);
     }
+    let service = &service;
     if let Some(pr) = deployment.pr_number {
         preview_databases(state, project, &network, pr, log).await?;
     }
@@ -339,6 +357,11 @@ async fn release(
     let hosts = services::hosts(state, service, project, deployment.pr_number)
         .await
         .map_err(err)?;
+    let replicas = if exclusive || deployment.pr_number.is_some() {
+        1
+    } else {
+        service.replicas.max(1) as i64
+    };
 
     let spec = spec::Release {
         project_name: &project.name,
@@ -349,11 +372,15 @@ async fn release(
         hosts: &hosts,
         volumes: &volumes,
         project_network: &network,
-        proxy_network: &state.config.proxy_network,
+        proxy_network: cluster::MESH,
         tls: state.config.tls(),
+        replicas,
+        constraints: cluster::constraints(service, image),
     };
-    let name = spec.container_name();
+    let name = spec.name();
 
+    // What this deployment replaces: Swarm services, and plain containers from
+    // before the cluster.
     let service_id = service.id.to_string();
     let pr = deployment.pr_number.map(|p| p.to_string());
     let mut labels = vec![
@@ -364,13 +391,19 @@ async fn release(
         labels.push((LABEL_PR, pr.as_str()));
     }
     let deployment_id = deployment.id.to_string();
-    let old: Vec<String> = docker::list(&state.docker, &labels)
+    let old: Vec<docker::Workload> = docker::workloads(&state.docker, &labels)
         .await?
         .into_iter()
-        .filter(|c| docker::label(c, LABEL_DEPLOYMENT) != Some(deployment_id.as_str()))
+        .filter(|w| w.label(LABEL_DEPLOYMENT) != Some(deployment_id.as_str()))
+        .filter(|w| pr.is_some() || w.label(LABEL_PR).is_none())
+        .collect();
+    let old_containers: Vec<String> = docker::list(&state.docker, &labels)
+        .await?
+        .into_iter()
         .filter(|c| pr.is_some() || docker::label(c, LABEL_PR).is_none())
         .filter_map(|c| c.id)
         .collect();
+    let replaces = !old.is_empty() || !old_containers.is_empty();
 
     if let Some(command) = &service.pre_deploy_command {
         // A preview runs it only against its own database copies; with a
@@ -403,11 +436,9 @@ async fn release(
     }
 
     if let Some(schedule) = &service.cron_schedule {
-        // Nothing stays up: runs start from this image on the schedule. A
-        // container left from before the service was scheduled goes.
-        for id in &old {
-            docker::remove(&state.docker, id).await?;
-        }
+        // Nothing stays up: runs start from this image on the schedule. What
+        // ran before the service was scheduled goes.
+        retire(state, &old, &old_containers).await?;
         mark_released(state, service, deployment, image).await?;
         log.line(format!(
             "==> Ready. Runs on the schedule `{schedule}` (UTC)"
@@ -415,59 +446,68 @@ async fn release(
         return Ok(());
     }
 
-    let exclusive = !volumes.is_empty() || service.public_port.is_some();
-    if exclusive && !old.is_empty() {
-        log.line("==> Stopping the previous container first (it holds a volume or host port)");
-        for id in &old {
+    if exclusive && replaces {
+        log.line("==> Stopping the previous version first (it holds a volume or host port)");
+        for w in &old {
+            docker::scale(&state.docker, &w.name, 0).await?;
+            docker::wait_stopped(&state.docker, &w.name).await;
+        }
+        for id in &old_containers {
             docker::stop(&state.docker, id).await?;
         }
     }
 
-    log.line(format!("==> Starting {name}"));
-    let started = docker::create_and_start(&state.docker, &name, spec.body()).await;
+    log.line(format!(
+        "==> Starting {name} ({replicas} {})",
+        if replicas == 1 { "copy" } else { "copies" }
+    ));
+    let credentials = cluster::pull_credentials(state, image).await;
+    let started = docker::create_service(&state.docker, spec.spec(), credentials).await;
     let healthy = match started {
-        Ok(id) => match wait_healthy(state, service, &network, &name, deployment, log).await {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                log.line("==> Last output from the container:");
-                for line in docker::tail_logs(&state.docker, &id, 30).await {
-                    log.line(format!("    {line}"));
+        Ok(_) => {
+            match wait_healthy(state, service, &network, &name, replicas, deployment, log).await {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    log.line("==> Last output:");
+                    for line in docker::service_tail_logs(&state.docker, &name, 30).await {
+                        log.line(format!("    {line}"));
+                    }
+                    docker::remove_service(&state.docker, &name).await?;
+                    Err(error)
                 }
-                docker::remove(&state.docker, &id).await?;
-                Err(error)
             }
-        },
+        }
         Err(error) => Err(error),
     };
     if let Err(error) = healthy {
-        if exclusive {
-            for id in &old {
+        if exclusive && replaces {
+            for w in &old {
+                let _ = docker::scale(&state.docker, &w.name, w.desired.max(1) as i64).await;
+            }
+            for id in &old_containers {
                 let _ = docker::start(&state.docker, id).await;
             }
-            if !old.is_empty() {
-                log.line("==> Restarted the previous container");
-            }
-        } else if !old.is_empty() {
-            log.line("==> The previous container keeps serving");
+            log.line("==> Started the previous version again");
+        } else if replaces {
+            log.line("==> The previous version keeps serving");
         }
         return Err(error);
     }
 
     // Hand traffic over before removing anything: give Traefik time to add the
-    // new container, then stop the old one gracefully. Once it stops listening,
-    // Traefik's retry middleware sends refused requests to the new container.
-    if spec.routed() && !exclusive && !old.is_empty() {
+    // new copies, then stop the old ones gracefully. Once they stop listening,
+    // Traefik's retry middleware sends refused requests to the new ones.
+    if spec.routed() && !exclusive && replaces {
+        tokio::time::sleep(PROXY_SETTLE).await;
+        for w in &old {
+            docker::scale(&state.docker, &w.name, 0).await?;
+        }
+        for id in &old_containers {
+            docker::stop(&state.docker, id).await?;
+        }
         tokio::time::sleep(PROXY_SETTLE).await;
     }
-    for id in &old {
-        docker::stop(&state.docker, id).await?;
-    }
-    if spec.routed() && !exclusive && !old.is_empty() {
-        tokio::time::sleep(PROXY_SETTLE).await;
-    }
-    for id in &old {
-        docker::remove(&state.docker, id).await?;
-    }
+    retire(state, &old, &old_containers).await?;
 
     mark_released(state, service, deployment, image).await?;
 
@@ -477,6 +517,21 @@ async fn release(
     }
     if hosts.is_empty() {
         log.line("==> Running");
+    }
+    Ok(())
+}
+
+/// Removes what a release replaced.
+async fn retire(
+    state: &SharedState,
+    old: &[docker::Workload],
+    containers: &[String],
+) -> anyhow::Result<()> {
+    for w in old {
+        docker::remove_service(&state.docker, &w.name).await?;
+    }
+    for id in containers {
+        docker::remove(&state.docker, id).await?;
     }
     Ok(())
 }
@@ -522,22 +577,24 @@ async fn wait_healthy(
     state: &SharedState,
     service: &Service,
     network: &str,
-    container: &str,
+    name: &str,
+    replicas: i64,
     deployment: &Deployment,
     log: &DeployLog,
 ) -> anyhow::Result<()> {
+    docker::wait_running(&state.docker, name, replicas, Duration::from_secs(180)).await?;
     let Some(port) = service.port else {
-        // A worker has nothing to probe; make sure it doesn't exit straight away.
+        // A worker has nothing to probe; make sure its copies don't exit straight away.
         tokio::time::sleep(Duration::from_secs(5)).await;
-        let inspect = state.docker.inspect_container(container, None).await?;
-        let state = inspect.state.unwrap_or_default();
-        if state.running == Some(true) && state.restarting != Some(true) {
+        let running = docker::tasks(&state.docker, name)
+            .await?
+            .iter()
+            .filter(|t| docker::task_running(t))
+            .count() as i64;
+        if running >= replicas {
             return Ok(());
         }
-        bail!(
-            "the container exited (code {})",
-            state.exit_code.unwrap_or_default()
-        );
+        bail!("its copies stopped right after starting");
     };
 
     let path = service.health_path.clone().unwrap_or_default();
@@ -545,8 +602,9 @@ async fn wait_healthy(
         "" => format!("==> Waiting for port {port}"),
         p => format!("==> Waiting for GET {p} on port {port}"),
     });
+    // The service's name resolves on the project network to its copies.
     let check = format!("jd-check-{}", &deployment.id.simple().to_string()[..12]);
-    if !probe(state, network, container, port, &path, &check, log).await? {
+    if !probe(state, network, name, port, &path, &check, log).await? {
         bail!("the service did not become healthy; is it listening on 0.0.0.0:{port}?");
     }
     Ok(())
@@ -608,7 +666,19 @@ async fn preview_databases(
         let alias = names::preview_database(&db.name, pr);
         let (id, pr_label) = (db.id.to_string(), pr.to_string());
         let labels = [(LABEL_SERVICE, id.as_str()), (LABEL_PR, pr_label.as_str())];
-        if let Some(existing) = docker::list(&state.docker, &labels).await?.first() {
+        let found = docker::list(&state.docker, &labels).await?;
+        let on_network = |c: &bollard::models::ContainerSummary| {
+            c.network_settings
+                .as_ref()
+                .and_then(|n| n.networks.as_ref())
+                .is_some_and(|n| n.contains_key(network))
+        };
+        for stale in found.iter().filter(|c| !on_network(c)) {
+            if let Some(cid) = &stale.id {
+                docker::remove(&state.docker, cid).await?;
+            }
+        }
+        if let Some(existing) = found.iter().find(|c| on_network(c)) {
             if !docker::is_running(existing) {
                 if let Some(cid) = &existing.id {
                     docker::start(&state.docker, cid).await?;
@@ -666,7 +736,8 @@ async fn prune_images(state: &SharedState, service_id: Uuid, current: &str) -> a
     let stale = sqlx::query_scalar!(
         r#"
         SELECT image_ref AS "image!" FROM deployments
-        WHERE service_id = $1 AND kind = 'production' AND image_ref LIKE 'jd-%'
+        WHERE service_id = $1 AND kind = 'production'
+          AND (image_ref LIKE 'jd-%' OR image_ref LIKE '%/jd-%')
         GROUP BY image_ref
         ORDER BY max(created_at) DESC
         OFFSET $2
@@ -685,7 +756,7 @@ async fn prune_images(state: &SharedState, service_id: Uuid, current: &str) -> a
 async fn built_images(db: &PgPool, service_id: Uuid, pr: Option<i32>) -> Result<Vec<String>> {
     Ok(sqlx::query_scalar!(
         r#"SELECT DISTINCT image_ref AS "image!" FROM deployments
-           WHERE service_id = $1 AND image_ref LIKE 'jd-%'
+           WHERE service_id = $1 AND (image_ref LIKE 'jd-%' OR image_ref LIKE '%/jd-%')
              AND ($2::int IS NULL OR pr_number = $2)"#,
         service_id,
         pr
@@ -702,6 +773,9 @@ pub async fn remove_service(state: &SharedState, service_id: Uuid) -> Result<()>
         Err(e) => return Err(e),
     };
     let id = service.id.to_string();
+    for workload in docker::workloads(&state.docker, &[(LABEL_SERVICE, &id)]).await? {
+        docker::remove_service(&state.docker, &workload.name).await?;
+    }
     for container in docker::list(&state.docker, &[(LABEL_SERVICE, &id)]).await? {
         if let Some(cid) = container.id {
             docker::remove(&state.docker, &cid).await?;
@@ -730,6 +804,7 @@ pub async fn remove_project(state: &SharedState, project_id: Uuid) -> Result<()>
         remove_service(state, service.id).await?;
     }
     docker::remove_network(&state.docker, &names::project_network(project.id)).await?;
+    docker::remove_network(&state.docker, &names::legacy_project_network(project.id)).await?;
     sqlx::query!("DELETE FROM projects WHERE id = $1", project.id)
         .execute(&state.db)
         .await?;
@@ -741,6 +816,9 @@ pub async fn remove_preview(state: &SharedState, service_id: Uuid, pr: i32) -> R
     let id = service_id.to_string();
     let pr_label = pr.to_string();
     let labels = [(LABEL_SERVICE, id.as_str()), (LABEL_PR, pr_label.as_str())];
+    for workload in docker::workloads(&state.docker, &labels).await? {
+        docker::remove_service(&state.docker, &workload.name).await?;
+    }
     for container in docker::list(&state.docker, &labels).await? {
         if let Some(cid) = container.id {
             docker::remove(&state.docker, &cid).await?;

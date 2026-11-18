@@ -5,7 +5,8 @@ FROM alpine:3.22
 ARG RAILPACK_VERSION=0.43.0
 ARG TARGETARCH
 
-RUN apk add --no-cache bash ca-certificates coreutils curl docker-cli docker-cli-buildx git
+# socat: the node agent that forwards each server's Docker API to the control plane.
+RUN apk add --no-cache bash ca-certificates coreutils curl docker-cli docker-cli-buildx git socat
 
 RUN case "$TARGETARCH" in \
       amd64) arch=x86_64 ;; \

@@ -1,0 +1,98 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT ON (node_id) node_id, ts, cpu_percent, memory_used, memory_total,\n             disk_used, disk_total\n         FROM host_samples ORDER BY node_id, ts DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "node_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "host_samples",
+            "name": "node_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "ts",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "host_samples",
+            "name": "ts"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "cpu_percent",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "host_samples",
+            "name": "cpu_percent"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "memory_used",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "host_samples",
+            "name": "memory_used"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "memory_total",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "host_samples",
+            "name": "memory_total"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "disk_used",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "host_samples",
+            "name": "disk_used"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "disk_total",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "host_samples",
+            "name": "disk_total"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "204e6400495a38868da012cf8d092fb53d2f975b82c53932fbb8ea1d19620d7e"
+}

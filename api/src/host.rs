@@ -6,6 +6,7 @@
 //! path works on Docker Desktop, where it reports the Docker VM.
 
 use crate::{
+    cluster,
     docker::{self, spec, MANAGED},
     error::Result,
     state::SharedState,
@@ -14,6 +15,7 @@ use anyhow::{anyhow, bail};
 use bollard::{
     exec::{CreateExecOptions, StartExecResults},
     models::{ContainerCreateBody, HostConfig, RestartPolicy, RestartPolicyNameEnum},
+    Docker,
 };
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
@@ -25,8 +27,8 @@ use std::{
 
 const AGENT: &str = "jd-agent";
 
-/// The previous `/proc/stat` CPU counters (total, idle), for the next delta.
-static LAST_CPU: Mutex<Option<(u64, u64)>> = Mutex::new(None);
+/// Each server's previous `/proc/stat` CPU counters (total, idle), for the next delta.
+static LAST_CPU: Mutex<Option<HashMap<String, (u64, u64)>>> = Mutex::new(None);
 /// The last `docker system df`, refreshed every ten minutes.
 static DOCKER_DISK: RwLock<Option<DockerDisk>> = RwLock::new(None);
 
@@ -113,11 +115,11 @@ fn parse_uptime(uptime: &str) -> Option<u64> {
 
 // ---------------------------------------------------------------- the agent
 
-async fn ensure_agent(state: &SharedState) -> anyhow::Result<()> {
-    match state.docker.inspect_container(AGENT, None).await {
+async fn ensure_agent(state: &SharedState, docker: &Docker) -> anyhow::Result<()> {
+    match docker.inspect_container(AGENT, None).await {
         Ok(found) => {
             if found.state.and_then(|s| s.running) != Some(true) {
-                docker::start(&state.docker, AGENT).await?;
+                docker::start(docker, AGENT).await?;
             }
             return Ok(());
         }
@@ -125,11 +127,11 @@ async fn ensure_agent(state: &SharedState) -> anyhow::Result<()> {
         Err(e) => return Err(e.into()),
     }
     let image = &state.config.builder_image;
-    if !docker::image_exists(&state.docker, image).await {
+    if !docker::image_exists(docker, image).await {
         if image.ends_with(":dev") {
             bail!("builder image {image} is missing");
         }
-        docker::pull_image(&state.docker, image, |_| {}).await?;
+        docker::pull_image(docker, image, |_| {}).await?;
     }
     let body = ContainerCreateBody {
         image: Some(image.clone()),
@@ -148,16 +150,15 @@ async fn ensure_agent(state: &SharedState) -> anyhow::Result<()> {
         }),
         ..Default::default()
     };
-    docker::create_and_start(&state.docker, AGENT, body).await?;
+    docker::create_and_start(docker, AGENT, body).await?;
     Ok(())
 }
 
-async fn read_proc(state: &SharedState) -> anyhow::Result<String> {
-    ensure_agent(state).await?;
+async fn read_proc(state: &SharedState, docker: &Docker) -> anyhow::Result<String> {
+    ensure_agent(state, docker).await?;
     let script = "cat /proc/stat; echo '#---'; cat /proc/meminfo; echo '#---'; cat /proc/net/dev; \
                   echo '#---'; cat /proc/uptime; echo '#---'; df -Pk /";
-    let exec = state
-        .docker
+    let exec = docker
         .create_exec(
             AGENT,
             CreateExecOptions {
@@ -168,8 +169,7 @@ async fn read_proc(state: &SharedState) -> anyhow::Result<String> {
             },
         )
         .await?;
-    let StartExecResults::Attached { mut output, .. } =
-        state.docker.start_exec(&exec.id, None).await?
+    let StartExecResults::Attached { mut output, .. } = docker.start_exec(&exec.id, None).await?
     else {
         bail!("could not attach to the agent");
     };
@@ -180,19 +180,34 @@ async fn read_proc(state: &SharedState) -> anyhow::Result<String> {
     Ok(String::from_utf8_lossy(&text).into_owned())
 }
 
-/// Takes one sample of the server and stores it.
+/// Takes one sample of every server and stores it.
 pub async fn sample(state: SharedState) -> Result<()> {
-    let text = read_proc(&state).await?;
+    for node in docker::ready_nodes(&state.docker).await? {
+        let sampled = match cluster::node_docker(&state, &node) {
+            Ok(docker) => sample_node(&state, &docker, &node).await,
+            Err(e) => Err(e),
+        };
+        if let Err(error) = sampled {
+            tracing::debug!(%node, error = format!("{error:#}"), "no sample from this server");
+        }
+    }
+    Ok(())
+}
+
+async fn sample_node(state: &SharedState, docker: &Docker, node: &str) -> anyhow::Result<()> {
+    let text = read_proc(state, docker).await?;
     let parts: Vec<&str> = text.split("#---").map(str::trim).collect();
     let [stat, meminfo, net, uptime, df] = parts.as_slice() else {
-        return Err(anyhow!("unexpected agent output").into());
+        bail!("unexpected agent output");
     };
     let (total, idle) = parse_cpu(stat).ok_or_else(|| anyhow!("unreadable /proc/stat"))?;
     // CPU use is a rate between two readings; the first one after a start only
     // primes it, rather than storing a false 0%.
     let cpu_percent = {
         let mut last = LAST_CPU.lock().map_err(|_| anyhow!("poisoned"))?;
-        let previous = last.replace((total, idle));
+        let previous = last
+            .get_or_insert_with(HashMap::new)
+            .insert(node.to_string(), (total, idle));
         match previous {
             Some((t0, i0)) if total > t0 => {
                 let busy = (total - t0).saturating_sub(idle.saturating_sub(i0));
@@ -211,9 +226,10 @@ pub async fn sample(state: SharedState) -> Result<()> {
     let (disk_used, disk_total) = parse_disk(df).ok_or_else(|| anyhow!("unreadable df output"))?;
     let (rx, tx) = parse_network(net);
     sqlx::query!(
-        "INSERT INTO host_samples (ts, cpu_percent, cpu_cores, memory_used, memory_total, disk_used,
-            disk_total, net_rx_bytes, net_tx_bytes, uptime_seconds)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT DO NOTHING",
+        "INSERT INTO host_samples (node_id, ts, cpu_percent, cpu_cores, memory_used, memory_total,
+            disk_used, disk_total, net_rx_bytes, net_tx_bytes, uptime_seconds)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT DO NOTHING",
+        node,
         Utc::now(),
         cpu_percent,
         cores as i32,

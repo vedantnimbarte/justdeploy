@@ -3,7 +3,7 @@
 use crate::{
     auth::{Admin, Member, Viewer},
     backups::{self, DestinationConfig, Schedule},
-    engines,
+    cluster, engines,
     error::{bad_request, Result},
     github, names, notify, services,
     state::SharedState,
@@ -70,6 +70,49 @@ pub async fn put_settings(
             }
         }
     }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------------------------------------------------------------- servers
+
+pub async fn list_servers(
+    _: Viewer,
+    State(state): State<SharedState>,
+) -> Result<Json<Vec<cluster::Server>>> {
+    Ok(Json(cluster::servers(&state).await?))
+}
+
+/// The command that adds a server. Admins only: the token lets a machine join.
+pub async fn join_server(
+    _: Admin,
+    State(state): State<SharedState>,
+) -> Result<Json<cluster::Join>> {
+    Ok(Json(cluster::join(&state).await?))
+}
+
+#[derive(Deserialize)]
+pub struct ServerUpdate {
+    /// active | drain | pause
+    availability: Option<String>,
+    labels: Option<std::collections::HashMap<String, String>>,
+}
+
+pub async fn update_server(
+    _: Admin,
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+    Json(body): Json<ServerUpdate>,
+) -> Result<StatusCode> {
+    cluster::update_server(&state, &id, body.availability.as_deref(), body.labels).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn remove_server(
+    _: Admin,
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode> {
+    cluster::remove_server(&state, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

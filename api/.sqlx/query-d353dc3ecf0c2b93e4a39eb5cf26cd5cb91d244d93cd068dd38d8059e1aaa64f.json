@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT image_ref AS \"image!\" FROM deployments\n        WHERE service_id = $1 AND kind = 'production' AND image_ref LIKE 'jd-%'\n        GROUP BY image_ref\n        ORDER BY max(created_at) DESC\n        OFFSET $2\n        ",
+  "query": "\n        SELECT image_ref AS \"image!\" FROM deployments\n        WHERE service_id = $1 AND kind = 'production'\n          AND (image_ref LIKE 'jd-%' OR image_ref LIKE '%/jd-%')\n        GROUP BY image_ref\n        ORDER BY max(created_at) DESC\n        OFFSET $2\n        ",
   "describe": {
     "columns": [
       {
@@ -25,5 +25,5 @@
       true
     ]
   },
-  "hash": "7a7000d34c8858774f109e568ff9e534023fd82b8e935d8d7620a2263affd403"
+  "hash": "d353dc3ecf0c2b93e4a39eb5cf26cd5cb91d244d93cd068dd38d8059e1aaa64f"
 }

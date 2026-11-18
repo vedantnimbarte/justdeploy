@@ -2,6 +2,7 @@
 
 mod auth;
 mod backups;
+mod cluster;
 mod config;
 mod crypto;
 mod docker;
@@ -52,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let docker =
-        bollard::Docker::connect_with_local_defaults().context("cannot reach the Docker daemon")?;
+        bollard::Docker::connect_with_defaults().context("cannot reach the Docker daemon")?;
     docker
         .ping()
         .await
@@ -67,6 +68,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     queue::maintenance::remove_stale_helpers(&state).await;
+    cluster::ensure(&state).await?;
     runs::fail_interrupted(&state)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;

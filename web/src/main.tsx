@@ -11,6 +11,7 @@ import { GitHubCreated, GitHubInstalled } from "./pages/GitHub";
 import NewServicePage from "./pages/NewService";
 import ProjectPage from "./pages/Project";
 import ProjectsPage from "./pages/Projects";
+import ServersPage from "./pages/Servers";
 import ServicePage from "./pages/Service";
 import SettingsPage from "./pages/Settings";
 import TeamPage from "./pages/Team";
@@ -55,6 +56,7 @@ function AuthGate() {
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/templates" element={<TemplatesPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/servers" element={<ServersPage />} />
         <Route path="/team" element={<TeamPage />} />
         <Route path="/account" element={<AccountPage />} />
         <Route path="/github/created" element={<GitHubCreated />} />

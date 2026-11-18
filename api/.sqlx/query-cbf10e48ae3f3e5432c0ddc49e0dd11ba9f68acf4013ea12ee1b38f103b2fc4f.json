@@ -1,0 +1,119 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.id, s.name, s.replicas, s.autoscale_min AS \"min!\", s.autoscale_max AS \"max!\",\n               s.autoscale_cpu, s.cpu_millis,\n               (SELECT avg(cpu_percent) FROM metric_samples m\n                 WHERE m.service_id = s.id AND m.ts > now() - interval '3 minutes') AS recent,\n               (SELECT count(*) FROM metric_samples m\n                 WHERE m.service_id = s.id AND m.ts > now() - interval '3 minutes') AS \"samples!\",\n               (SELECT max(cpu_percent) FROM metric_samples m\n                 WHERE m.service_id = s.id AND m.ts > now() - interval '10 minutes') AS peak\n           FROM services s\n           WHERE s.autoscale_max IS NOT NULL AND s.autoscale_min IS NOT NULL\n             AND s.desired_state = 'running' AND s.current_deployment_id IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "replicas",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "replicas"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "min!",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "autoscale_min"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "max!",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "autoscale_max"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "autoscale_cpu",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "autoscale_cpu"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "cpu_millis",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "cpu_millis"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "recent",
+        "type_info": "Float8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 8,
+        "name": "samples!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 9,
+        "name": "peak",
+        "type_info": "Float8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "cbf10e48ae3f3e5432c0ddc49e0dd11ba9f68acf4013ea12ee1b38f103b2fc4f"
+}

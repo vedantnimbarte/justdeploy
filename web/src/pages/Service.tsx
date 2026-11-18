@@ -89,6 +89,12 @@ export default function ServicePage() {
       >
         <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2">
           <StatusDot status={s.status} />
+          {(s.copies_desired > 1 || s.replicas > 1) && (
+            <span className="text-sm text-muted">
+              {s.copies_running} of {s.copies_desired || s.replicas} copies
+              {s.autoscale_max !== null && `, autoscaling ${s.autoscale_min}–${s.autoscale_max}`}
+            </span>
+          )}
           <Badge>{kindLabel(s)}</Badge>
           {s.url && (
             <a href={s.url} target="_blank" rel="noreferrer" className="font-mono text-[13px] break-all">

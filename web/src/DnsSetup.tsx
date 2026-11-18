@@ -148,7 +148,7 @@ function Steps({
 }
 
 /** A numbered step on a rail. Done steps turn green, the current one is ink. */
-function Step({
+export function Step({
   n,
   state,
   title,

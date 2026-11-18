@@ -44,6 +44,7 @@ who may do what, not for hosting strangers.
 - [Team, roles and access](#team-roles-and-access)
 - [Command line: jd](#command-line-jd)
 - [Notifications](#notifications)
+- [Servers and scaling](#servers-and-scaling)
 - [System overview](#system-overview)
 - [Templates](#templates)
 - [Configuration reference](#configuration-reference)
@@ -60,34 +61,39 @@ who may do what, not for hosting strangers.
 ## How it works
 
 ```
-                 ┌──────────────── your server ─────────────────────────────────────┐
+                 ┌──────────── main server (Swarm manager) ──────────────────────────┐
   browser ──────▶│ :8080  justdeploy (Rust API + dashboard) ── Postgres (its state)    │
-                 │            │                                                       │
-                 │            │ Docker API (/var/run/docker.sock)                     │
+                 │            │ Docker API                                            │
                  │            ▼                                                       │
-  visitors ─────▶│ :80/:443  Traefik ──▶ app containers   (network jd-proxy)         │
-                 │                        │                                           │
-                 │                        └─ project network jd-proj-…               │
-                 │                             api ◀──▶ db ◀──▶ cache                 │
-                 └───────────────────────────────────────────────────────────────────┘
+  visitors ─────▶│ :80/:443  Traefik ──▶ copies of your services   (overlay jd-mesh)  │
+                 └────────────┼──────────────────────┬────────────────────────────────┘
+                              │ jd-mesh / project    │ jd-control (encrypted):
+                              │ overlay networks     │ control plane ⇄ node agents
+                 ┌────────────▼──────────────────────▼──── more servers (optional) ───┐
+                 │  copies of your services             jd-node agent                  │
+                 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-Three containers make up justdeploy itself, all in one `docker-compose.yml`:
+Every install is a **Docker Swarm**. A single server is a cluster of one, and more servers join with
+one command (see [Servers and scaling](#servers-and-scaling)). Three containers make up justdeploy
+itself, all in one `docker-compose.yml` on the main server:
 
 | Container | Role |
 |---|---|
-| `justdeploy` | The control plane: a Rust (axum) API that also serves the React dashboard. It talks to the host's Docker daemon to build and run everything. |
+| `justdeploy` | The control plane: a Rust (axum) API that also serves the React dashboard. It drives the Swarm through Docker's API to build and run everything. |
 | `postgres` | justdeploy's own records: projects, services, deployments, encrypted secrets, backups, metrics. |
-| `traefik` | The reverse proxy. justdeploy puts labels on each container; Traefik routes hostnames to them and gets Let's Encrypt certificates. |
+| `traefik` | The reverse proxy. Each service carries routing labels; Traefik routes hostnames to its copies on any server and gets Let's Encrypt certificates. |
 
-Builds run in short-lived **builder** containers (`justdeploy-builder`: git, the Docker CLI with
-BuildKit, and Railpack). Built images stay in the server's local Docker image store; no registry is
-involved.
+Each deployment of a service runs as a Swarm service with one or more copies. Projects get their own
+overlay network, so services reach each other by name wherever they run. Builds run on the main server
+in short-lived **builder** containers (`justdeploy-builder`: git, the Docker CLI with BuildKit, and
+Railpack). With more than one server and HTTPS on, built images go to a private registry so every
+server can pull them; otherwise they stay on the main server, and so do the services built from them.
 
 Work that takes time (builds, releases, removals, backups) goes through a job queue in Postgres, so
-it survives a restart. A reconciler runs every minute and brings Docker back in line with the
-database: it restarts stopped containers, redeploys a service whose container was removed by hand,
-and removes containers that belong to nothing.
+it survives a restart. Swarm restarts copies that exit and moves them off a server that goes down. A
+reconciler runs every minute on top: it redeploys a service whose workload was removed by hand, scales
+stopped services to nothing, and removes what belongs to nothing.
 
 ---
 
@@ -525,6 +531,49 @@ An environment is addressed by its project name: `shop-staging/web`. In CI, set 
 
 ---
 
+## Servers and scaling
+
+**Servers.** The **Servers** page lists every server in the cluster with its CPU, memory and disk,
+and how many copies run on it. **Add a server** walks through it:
+
+1. Install Docker 24 or newer on the new server.
+2. Open the cluster ports between the servers: `2377/tcp` to the main server, `7946/tcp`, `7946/udp`
+   and `4789/udp` between all of them. Keep them closed to the internet.
+3. Run the `docker swarm join …` command the page shows on the new server.
+4. The page notices when it joins.
+
+Admins can label a server (`region=eu`, `disk=ssd`), **drain** it (its copies move to other servers,
+for maintenance), and remove one that is down. A server still up has to leave first
+(`docker swarm leave` on it). justdeploy's own server can't be drained or removed.
+
+**Copies.** Under a service's **Settings → Copies and servers**, run it as several copies; the
+cluster spreads them across servers and Traefik shares traffic between them. A deploy starts the new
+copies beside the old ones and switches over once they're healthy, as before. Anything with a volume
+(every database), a host port or a schedule runs exactly one copy.
+
+**Autoscaling.** Instead of a fixed count, give the fewest and most copies and a CPU target. Every
+minute justdeploy adds a copy when the average CPU per copy has stayed above the target for three
+minutes, and removes one when it hasn't reached half the target for ten. The target is a percentage
+of each copy's CPU limit, or of one core without a limit. Each change shows in the activity log.
+
+**Placement.** A service runs on any server unless you pin it to one or to servers with a label.
+A service with a volume is pinned to the server it first ran on, because its data lives there:
+justdeploy can't move volumes between servers.
+
+**Failover.** When a server goes down, Swarm restarts its copies on the others within seconds,
+except copies pinned to it (databases), which come back with their server.
+
+**Images across servers.** With HTTPS on and more than one server, built images are pushed to a
+private registry at `registry.<base domain>`, behind Traefik with a password derived from
+`JD_MASTER_KEY`, and every server pulls from it. Without HTTPS, apps built from Git keep running on
+the main server; images from Docker Hub and other public registries run anywhere.
+
+**Reaching other servers.** Each server other than the main one runs a small agent (`jd-node-…`) that
+forwards its Docker API onto `jd-control`, an encrypted overlay network only the control plane and
+the agents join. That is how logs, terminals, metrics and backups work wherever a copy runs.
+
+---
+
 ## Notifications
 
 Under **Settings → Notifications**, add a Slack or Discord incoming webhook, or any URL. A channel
@@ -637,11 +686,11 @@ The control plane reads its configuration from the environment (`.env` next to t
 | `JD_PORT` | `8080` | Host port (or `ip:port`) the dashboard is published on |
 | `JD_VERSION` | `latest` | Image tag of justdeploy to run |
 | `JD_BUILDER_IMAGE` | `ghcr.io/vedantnimbarte/justdeploy-builder:latest` | Image used for builds and health checks |
-| `JD_PROXY_NETWORK` | `jd-proxy` | Docker network Traefik watches |
 | `JD_TEMPLATES_REPO` | this repository | Repository code templates build from |
 | `JD_TEMPLATES_BRANCH` | `main` | Its branch |
 | `JD_BACKUP_DIR` | `/backups` | Root of "folder on this server" backup destinations |
 | `JD_DEPLOY_WORKERS` | `2` | Deploys (builds included) that run at once, each for a different service |
+| `JD_ADVERTISE_ADDR` | unset | The address other servers reach this one on, when Docker can't choose (a server with several). The installer passes the first address when it starts the Swarm |
 | `JD_BIND` | `0.0.0.0:8080` | Address the API listens on inside its container |
 | `JD_WEB_DIR` | `/app/web` in the image | Built dashboard to serve; unset in development |
 | `JD_COOKIE_SECURE` | `false` | Force `Secure` cookies (automatic when `JD_ACME_EMAIL` is set) |
@@ -669,6 +718,9 @@ authenticate by signature.
 | `GET` `POST` `DELETE` | `/auth/tokens`, `/auth/tokens/{id}` | Your API tokens · create `{name}` returns the value once |
 | `GET` `POST` | `/auth/invites/{token}` | What an invite is for · accept it `{password}` |
 | `GET` | `/users` | Everyone, with role and two-factor state |
+| `GET` | `/servers` | Every server: role, state, resources, labels, copies running, latest usage |
+| `GET` | `/servers/join` | Admin: `{command, manager_address}` to add a server |
+| `PATCH` `DELETE` | `/servers/{id}` | Admin: `{availability?: active \| drain \| pause, labels?}` · remove a server that's down |
 | `PATCH` `DELETE` | `/users/{id}` | Owner: `{role?, reset_two_factor?}` · remove |
 | `GET` `POST` `DELETE` | `/invites`, `/invites/{id}` | Owner: pending invites · create `{email, role}` returns the link once · revoke |
 | `GET` | `/activity?before=id` | Admin: the 100 newest entries before `before` |
@@ -742,6 +794,17 @@ docker compose pull && docker compose up -d        # add -f docker-compose.tls.y
 
 Migrations run at startup. Deployments in progress during an upgrade resume when the control plane
 comes back.
+
+**Upgrading from before servers and scaling.** That version changed the compose files (Traefik
+watches the Swarm too), so fetch them again by re-running the installer, which keeps your `.env`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vedantnimbarte/justdeploy/main/deploy/install.sh | sh
+```
+
+It starts a Swarm on the server. Within a minute of starting, the control plane moves each service
+from its old container onto the cluster: each restarts once, and databases briefly stop while they
+move. Data stays in the same volumes.
 
 To back up justdeploy's own state, keep a copy of `.env` (above all `JD_MASTER_KEY`) and dump its
 database:
@@ -818,6 +881,7 @@ docker compose up -d justdeploy      # dashboard at http://localhost:8080
 | `api/src/runs.rs` | One-off and scheduled runs of a service's image |
 | `api/src/notify.rs` | Notification channels and delivery to Slack, Discord or a webhook |
 | `api/src/auth.rs`, `crypto.rs` | People and roles, sessions, API tokens, invites, two-factor, rate limit; AES-GCM secrets |
+| `api/src/cluster.rs` | The Swarm: start-up, overlay networks, node agents, registry, placement, servers, autoscaling |
 | `api/src/github.rs` | The GitHub App: manifest flow, installation tokens, repositories, app webhooks, commit statuses |
 | `cli/src/main.rs` | `jd`: the command-line client over the API |
 | `api/migrations/` | Schema |
@@ -861,10 +925,16 @@ Dockerfile               Production image (API + dashboard)
 
 ## Known limits
 
-- **One server.** justdeploy manages the Docker host it runs on. Remote hosts are not supported yet.
+- **One main server.** The control plane, Traefik and the registry run on it, and all traffic enters
+  through it. Other servers add capacity and take over copies when one fails, but if the main server
+  is down, so is routing.
+- **Volumes stay on their server.** Services with a volume run one copy, pinned where their data is.
+- **The registry isn't cleaned**: old image layers stay until removed by hand.
 - **Roles are install-wide**: there is no per-project access yet.
 - **No recovery codes** for two-factor sign-in; an owner or `reset-password` turns it off instead.
 - **Run output** is saved when a run finishes, not streamed while it runs.
+- **Logs, terminals and metrics on other servers** go through the control plane's own container, so
+  in development (the API run with `cargo run`) only the main server's are visible.
 - **Previews** are GitHub only; GitLab merge requests do not get previews. Their database copies come
   from backups, so they are as fresh as the latest backup.
 - **Not tested end to end:** real Let's Encrypt issuance (it needs public DNS and port 80; the

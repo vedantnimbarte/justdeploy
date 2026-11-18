@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT DISTINCT image_ref AS \"image!\" FROM deployments\n           WHERE service_id = $1 AND image_ref LIKE 'jd-%'\n             AND ($2::int IS NULL OR pr_number = $2)",
+  "query": "SELECT DISTINCT image_ref AS \"image!\" FROM deployments\n           WHERE service_id = $1 AND (image_ref LIKE 'jd-%' OR image_ref LIKE '%/jd-%')\n             AND ($2::int IS NULL OR pr_number = $2)",
   "describe": {
     "columns": [
       {
@@ -25,5 +25,5 @@
       true
     ]
   },
-  "hash": "154047a95e01523b3ddcabe295979fe43aa6f86228658494f72fe86ea58cf19e"
+  "hash": "63cac8e5ebf98ce897bee6bfdfa2580355e35b8444aebde32f445c4c416d117a"
 }

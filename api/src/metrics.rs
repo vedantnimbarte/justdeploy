@@ -2,6 +2,7 @@
 //! kept for 24 hours.
 
 use crate::{
+    cluster,
     docker::{self, LABEL_KIND, LABEL_SERVICE},
     error::Result,
     state::SharedState,
@@ -22,21 +23,35 @@ struct Totals {
     tx: u64,
 }
 
+/// Every copy on every server, added up per service.
 pub async fn sample(state: SharedState) -> Result<()> {
-    let containers: Vec<_> = docker::list(&state.docker, &[(LABEL_KIND, "production")])
-        .await?
-        .into_iter()
-        .filter(docker::is_running)
-        .filter_map(|c| {
-            let service = docker::label(&c, LABEL_SERVICE)?.parse::<Uuid>().ok()?;
-            Some((service, c.id?))
-        })
-        .collect();
+    let mut containers = Vec::new();
+    for node in docker::ready_nodes(&state.docker).await? {
+        let listed = match cluster::node_docker(&state, &node) {
+            Ok(docker) => docker::list_all(&docker, &[(LABEL_KIND, "production")])
+                .await
+                .map(|list| (docker, list)),
+            Err(e) => Err(e),
+        };
+        let (docker, list) = match listed {
+            Ok(found) => found,
+            Err(error) => {
+                tracing::debug!(%node, %error, "no metrics from this server");
+                continue;
+            }
+        };
+        for c in list.into_iter().filter(docker::is_running) {
+            let service = docker::label(&c, LABEL_SERVICE).and_then(|s| s.parse::<Uuid>().ok());
+            if let (Some(service), Some(id)) = (service, c.id) {
+                containers.push((docker.clone(), service, id));
+            }
+        }
+    }
 
     // Without `one_shot`, Docker waits a second to fill in the previous CPU reading,
     // which is what the percentage is computed from. Run them side by side.
-    let stats = futures::future::join_all(containers.iter().map(|(service, id)| {
-        let docker = state.docker.clone();
+    let stats = futures::future::join_all(containers.iter().map(|(docker, service, id)| {
+        let docker = docker.clone();
         async move {
             let options = StatsOptionsBuilder::new().stream(false).build();
             let stats = docker.stats(id, Some(options)).next().await;

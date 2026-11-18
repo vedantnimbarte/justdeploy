@@ -1,6 +1,6 @@
 use crate::{
     auth::{Admin, Can, Member, Role, Viewer},
-    docker::{self, LABEL_KIND, LABEL_PROJECT, LABEL_SERVICE},
+    docker::{self, LABEL_KIND, LABEL_SERVICE},
     error::{bad_request, Result},
     models::{Deployment, Domain, Project, Run, Service, Volume},
     names, runs,
@@ -12,9 +12,8 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use bollard::models::{ContainerSummary, ContainerSummaryStateEnum};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use uuid::Uuid;
 
 #[derive(Serialize)]
@@ -23,6 +22,9 @@ pub struct ServiceView {
     service: Service,
     /// deploying | running | scheduled | crashed | stopped | failed | idle | deleting
     status: String,
+    /// Production copies up, and how many should be.
+    copies_running: u64,
+    copies_desired: u64,
     url: Option<String>,
     connection_url: Option<String>,
     has_git_token: bool,
@@ -68,11 +70,37 @@ pub(super) async fn latest_deployment(
     .await?)
 }
 
-pub(super) fn status(
-    service: &Service,
-    latest: Option<&Deployment>,
-    containers: &[&ContainerSummary],
-) -> String {
+/// How many production copies of a service run, and should.
+#[derive(Default, Clone, Copy)]
+pub(super) struct Copies {
+    pub running: u64,
+    pub desired: u64,
+}
+
+/// Copies of every service, from one look at the Swarm.
+pub(super) async fn copies(state: &SharedState) -> Result<HashMap<Uuid, Copies>> {
+    let mut out: HashMap<Uuid, Copies> = HashMap::new();
+    for w in docker::workloads(&state.docker, &[(LABEL_KIND, "production")]).await? {
+        if let Some(id) = w.label(LABEL_SERVICE).and_then(|s| s.parse().ok()) {
+            let c = out.entry(id).or_default();
+            // A server that went down still counts its copies as running until
+            // Swarm gives up on them; never show more than should run.
+            c.running += w.running.min(w.desired);
+            c.desired += w.desired;
+        }
+    }
+    // Plain containers from before the cluster, until they move onto it.
+    for c in docker::list(&state.docker, &[(LABEL_KIND, "production")]).await? {
+        if let Some(id) = docker::label(&c, LABEL_SERVICE).and_then(|s| s.parse().ok()) {
+            let e = out.entry(id).or_default();
+            e.desired += 1;
+            e.running += docker::is_running(&c) as u64;
+        }
+    }
+    Ok(out)
+}
+
+pub(super) fn status(service: &Service, latest: Option<&Deployment>, copies: Copies) -> String {
     if service.desired_state == "deleting" {
         return "deleting".into();
     }
@@ -93,26 +121,23 @@ pub(super) fn status(
     if service.cron_schedule.is_some() {
         return "scheduled".into();
     }
-    let running = containers
-        .iter()
-        .any(|c| matches!(c.state, Some(ContainerSummaryStateEnum::RUNNING)));
-    if running { "running" } else { "crashed" }.into()
+    if copies.running > 0 {
+        "running"
+    } else {
+        "crashed"
+    }
+    .into()
 }
 
 pub async fn view_service(
     state: &SharedState,
     project: &Project,
     service: Service,
-    containers: &[ContainerSummary],
+    copies: &HashMap<Uuid, Copies>,
     base: &str,
 ) -> Result<ServiceView> {
     let latest = latest_deployment(state, service.id).await?;
-    let id = service.id.to_string();
-    let mine: Vec<&ContainerSummary> = containers
-        .iter()
-        .filter(|c| docker::label(c, LABEL_SERVICE) == Some(id.as_str()))
-        .filter(|c| docker::label(c, LABEL_KIND) == Some("production"))
-        .collect();
+    let mine = copies.get(&service.id).copied().unwrap_or_default();
     let url = if service.public && service.port.is_some() {
         let scheme = if state.config.tls() { "https" } else { "http" };
         Some(format!(
@@ -123,7 +148,9 @@ pub async fn view_service(
         None
     };
     Ok(ServiceView {
-        status: status(&service, latest.as_ref(), &mine),
+        status: status(&service, latest.as_ref(), mine),
+        copies_running: mine.running,
+        copies_desired: mine.desired,
         url,
         connection_url: services::connection_url(state, &service).await?,
         has_git_token: service.git_token_enc.is_some(),
@@ -135,7 +162,7 @@ pub async fn view_service(
 async fn project_view(
     state: &SharedState,
     project: Project,
-    containers: &[ContainerSummary],
+    copies: &HashMap<Uuid, Copies>,
     base: &str,
     role: Role,
 ) -> Result<ProjectView> {
@@ -143,7 +170,7 @@ async fn project_view(
     let views = futures::future::try_join_all(
         services
             .into_iter()
-            .map(|service| view_service(state, &project, service, containers, base)),
+            .map(|service| view_service(state, &project, service, copies, base)),
     )
     .await?;
     let environments = services::environments(&state.db, &project)
@@ -167,14 +194,14 @@ pub async fn list(
     Can(user): Viewer,
     State(state): State<SharedState>,
 ) -> Result<Json<Vec<ProjectView>>> {
-    let containers = docker::list(&state.docker, &[]).await?;
+    let copies = copies(&state).await?;
     let base = services::base_domain(&state).await?;
     let projects = services::list_projects(&state.db).await?;
     let views = futures::future::try_join_all(
         projects
             .into_iter()
             .filter(|p| p.base_id.is_none())
-            .map(|project| project_view(&state, project, &containers, &base, user.role)),
+            .map(|project| project_view(&state, project, &copies, &base, user.role)),
     )
     .await?;
     Ok(Json(views))
@@ -200,11 +227,10 @@ pub async fn get(
     Path(id): Path<Uuid>,
 ) -> Result<Json<ProjectView>> {
     let project = services::get_project(&state.db, id).await?;
-    let pid = project.id.to_string();
-    let containers = docker::list(&state.docker, &[(LABEL_PROJECT, &pid)]).await?;
+    let copies = copies(&state).await?;
     let base = services::base_domain(&state).await?;
     Ok(Json(
-        project_view(&state, project, &containers, &base, user.role).await?,
+        project_view(&state, project, &copies, &base, user.role).await?,
     ))
 }
 
@@ -307,8 +333,7 @@ pub async fn get_service(
 ) -> Result<Json<ServiceDetail>> {
     let service = services::get_service(&state.db, id).await?;
     let project = services::get_project(&state.db, service.project_id).await?;
-    let pid = project.id.to_string();
-    let containers = docker::list(&state.docker, &[(LABEL_PROJECT, &pid)]).await?;
+    let copies = copies(&state).await?;
     let base = services::base_domain(&state).await?;
     let generated_host = (service.public && service.port.is_some())
         .then(|| names::generated_host(&service.name, &project.name, &base));
@@ -331,7 +356,7 @@ pub async fn get_service(
         volumes: services::volumes(&state.db, id).await?,
         domains: services::domains(&state.db, id).await?,
         generated_host,
-        view: view_service(&state, &project, service, &containers, &base)
+        view: view_service(&state, &project, service, &copies, &base)
             .await?
             .for_role(user.role),
         project,
@@ -382,12 +407,11 @@ pub async fn service_action(
         "stop" => {
             services::set_desired(&state.db, id, "stopped").await?;
             let sid = id.to_string();
-            for container in docker::list(
-                &state.docker,
-                &[(LABEL_SERVICE, &sid), (LABEL_KIND, "production")],
-            )
-            .await?
-            {
+            let labels = [(LABEL_SERVICE, sid.as_str()), (LABEL_KIND, "production")];
+            for workload in docker::workloads(&state.docker, &labels).await? {
+                docker::scale(&state.docker, &workload.name, 0).await?;
+            }
+            for container in docker::list(&state.docker, &labels).await? {
                 if let Some(cid) = container.id {
                     docker::stop(&state.docker, &cid).await?;
                 }

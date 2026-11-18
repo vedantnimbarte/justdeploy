@@ -43,6 +43,8 @@ jsonwebtoken = "9"
 # Two-factor sign-in: one-time codes, and the setup QR code as SVG.
 totp-rs = { version = "5", features = ["otpauth", "gen_secret"] }
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+# The registry's basic auth is checked by Traefik, which takes SHA-1 hashes.
+sha1 = "0.10"
 time = "0.3"
 
 [lints.clippy]

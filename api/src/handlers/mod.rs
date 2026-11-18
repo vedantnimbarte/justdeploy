@@ -50,6 +50,13 @@ pub fn router(state: SharedState) -> Router {
         )
         .route("/invites/{id}", delete(team::revoke_invite))
         .route("/activity", get(team::activity))
+        // servers
+        .route("/servers", get(admin::list_servers))
+        .route("/servers/join", get(admin::join_server))
+        .route(
+            "/servers/{id}",
+            patch(admin::update_server).delete(admin::remove_server),
+        )
         // GitHub App
         .route("/github", get(admin::github_overview))
         .route("/github/manifest", post(admin::github_manifest))
