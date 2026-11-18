@@ -1,9 +1,24 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState, type FormEvent } from "react";
-import { api, bytes, timeAgo, type ClusterServer, type Settings } from "../api";
+import { api, bytes, timeAgo, type ClusterServer, type Resilience, type Settings } from "../api";
 import { Step } from "../DnsSetup";
 import { useMe } from "../me";
-import { Badge, Band, Button, Card, CodeLine, cx, ErrorText, Field, Modal, PageHeader, SectionTitle, Textarea, useToast } from "../ui";
+import {
+  Badge,
+  Band,
+  Button,
+  Card,
+  CodeLine,
+  cx,
+  ErrorText,
+  Field,
+  Modal,
+  PageHeader,
+  SectionTitle,
+  Select,
+  Textarea,
+  useToast,
+} from "../ui";
 
 export default function ServersPage() {
   const { can } = useMe();
@@ -37,6 +52,7 @@ export default function ServersPage() {
             One server for now. Add another and services with more than one copy spread across both; databases stay with their data.
           </p>
         )}
+        {list.length > 1 && <Resilient servers={list} />}
       </Band>
     </>
   );
@@ -49,9 +65,18 @@ function ServerRow({ server: s }: { server: ClusterServer }) {
   const [labelling, setLabelling] = useState(false);
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["servers"] });
   const update = useMutation({
-    mutationFn: (body: { availability?: string; labels?: Record<string, string> }) => api.patch(`/servers/${s.id}`, body),
+    mutationFn: (body: { availability?: string; role?: string; labels?: Record<string, string> }) => api.patch(`/servers/${s.id}`, body),
     onSuccess: (_, body) => {
-      toast(body.availability === "drain" ? "Draining: its copies are moving to other servers" : "Saved");
+      toast(
+        body.availability === "drain"
+          ? "Draining: its copies are moving to other servers"
+          : body.role === "manager"
+            ? `${s.hostname} is a manager; it starts routing traffic within a minute`
+            : body.role === "worker"
+              ? `${s.hostname} is a worker`
+              : "Saved",
+      );
+      queryClient.invalidateQueries({ queryKey: ["resilience"] });
       refresh();
       setLabelling(false);
     },
@@ -75,6 +100,7 @@ function ServerRow({ server: s }: { server: ClusterServer }) {
           <span className={cx("size-2 shrink-0 rounded-full", up ? "bg-ok" : "bg-err")} aria-hidden />
           <p className="truncate font-semibold">{s.hostname}</p>
           {s.this && <Badge>justdeploy runs here</Badge>}
+          {s.role === "manager" && <Badge>Manager</Badge>}
           {s.availability !== "active" && <Badge>{s.availability === "drain" ? "Draining" : "Paused"}</Badge>}
         </div>
         <p className="mt-1 text-sm text-muted">
@@ -112,6 +138,16 @@ function ServerRow({ server: s }: { server: ClusterServer }) {
           <Button variant="tertiary" className="h-8" onClick={() => setLabelling(true)}>
             Labels
           </Button>
+          {!s.this && up && (
+            <Button
+              variant="tertiary"
+              className="h-8"
+              busy={update.isPending && update.variables?.role !== undefined}
+              onClick={() => update.mutate({ role: s.role === "manager" ? "worker" : "manager" })}
+            >
+              {s.role === "manager" ? "Make worker" : "Make manager"}
+            </Button>
+          )}
           {!s.this &&
             (s.availability === "active" ? (
               <Button variant="tertiary" className="h-8" busy={update.isPending} onClick={() => update.mutate({ availability: "drain" })}>
@@ -129,8 +165,165 @@ function ServerRow({ server: s }: { server: ClusterServer }) {
           )}
         </div>
       )}
-      <LabelEditor server={s} open={labelling} onClose={() => setLabelling(false)} onSave={(labels) => update.mutate({ labels })} busy={update.isPending} />
+      <LabelEditor
+        server={s}
+        open={labelling}
+        onClose={() => setLabelling(false)}
+        onSave={(labels) => update.mutate({ labels })}
+        busy={update.isPending}
+      />
     </li>
+  );
+}
+
+/**
+ * What keeps apps up when the main server goes: Traefik on every manager, and
+ * a standby of justdeploy's own database to take over from.
+ */
+function Resilient({ servers }: { servers: ClusterServer[] }) {
+  const { can } = useMe();
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const status = useQuery({
+    queryKey: ["resilience"],
+    queryFn: () => api.get<Resilience>("/cluster/resilience"),
+    refetchInterval: 10_000,
+  });
+  const settings = useQuery({ queryKey: ["settings"], queryFn: () => api.get<Settings>("/settings") });
+  const candidates = servers.filter((s) => !s.this && s.role === "manager");
+  const [choice, setChoice] = useState("");
+  const pick = useMutation({
+    mutationFn: (node: string | null) => api.put("/cluster/standby", { node }),
+    onSuccess: (_, node) => {
+      toast(node ? "Copying justdeploy's database to the standby" : "Standby removed");
+      queryClient.invalidateQueries({ queryKey: ["resilience"] });
+    },
+    onError: (e) => toast(e.message, true),
+  });
+  const r = status.data;
+  if (!r) return <ErrorText error={status.error} />;
+  const standby = r.standby;
+  const majority = r.managers >= 3 && r.managers % 2 === 1;
+
+  return (
+    <Card>
+      <SectionTitle>If this server goes down</SectionTitle>
+      <p className="-mt-2 mb-6 max-w-[68ch] text-muted">
+        Copies on other servers keep running wherever this one fails. Two more things keep them reachable and let justdeploy carry on from
+        another server.
+      </p>
+      <ol className="grid max-w-3xl grid-cols-1">
+        <Step
+          n={1}
+          state={r.edges.length > 0 && r.edges.every((e) => e.running) ? "done" : "current"}
+          title={r.edges.length ? "Traffic enters through every manager" : "Make other servers managers"}
+        >
+          {r.edges.length === 0 ? (
+            <p className="text-muted">
+              All traffic comes in through this server. Each manager you add runs its own copy of the router, so apps stay reachable through
+              it. Use <strong>Make manager</strong> above; three or five managers in all keep the cluster running when one is lost.
+            </p>
+          ) : (
+            <>
+              <ul className="mb-3 grid gap-1">
+                {r.edges.map((e) => (
+                  <li key={e.id} className="flex flex-wrap items-center gap-x-3">
+                    <span className={cx("size-2 rounded-full", e.running ? "bg-ok" : "bg-warn pulse")} aria-hidden />
+                    <span className="font-medium">{e.hostname}</span>
+                    <code className="text-[13px] text-muted">{e.address}</code>
+                    <span className="text-sm text-muted">{e.running ? "Routing" : "Starting the router"}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-muted">
+                Give your domains an A record for each of these servers too (or put a load balancer in front), so visitors reach a server
+                that's up.
+                {settings.data?.tls &&
+                  ` They serve the ${r.certificates} certificate${r.certificates === 1 ? "" : "s"} this server's router has issued.`}
+              </p>
+              {!majority && (
+                <p className="mt-2 text-sm text-warn">
+                  {r.managers} managers: the cluster can only reschedule copies while more than half of them are up, so with{" "}
+                  {r.managers === 2 ? "two, losing either stops it" : "an even number one more adds nothing"}. Make it 3 or 5.
+                </p>
+              )}
+            </>
+          )}
+        </Step>
+        <Step
+          n={2}
+          state={standby?.state === "streaming" ? "done" : "current"}
+          title={standby ? `justdeploy's database is copied to ${standby.hostname}` : "Keep a standby of justdeploy's database"}
+          last
+        >
+          {standby ? (
+            <div className="grid grid-cols-1 gap-3">
+              <p className="flex flex-wrap items-center gap-x-3">
+                <span
+                  className={cx(
+                    "size-2 rounded-full",
+                    standby.state === "streaming" ? "bg-ok" : standby.state === "stopped" ? "bg-err" : "bg-warn pulse",
+                  )}
+                  aria-hidden
+                />
+                <span className="font-medium">
+                  {standby.state === "streaming"
+                    ? "Up to date"
+                    : standby.state === "copying"
+                      ? "Copying the database"
+                      : standby.state === "stopped"
+                        ? "Not connected"
+                        : "Catching up"}
+                </span>
+                {standby.lag_bytes !== null && (
+                  <span className="text-sm text-muted">
+                    {standby.lag_bytes === 0 ? "nothing behind" : `${bytes(standby.lag_bytes)} behind`}
+                  </span>
+                )}
+              </p>
+              <div>
+                <p className="mb-2 text-muted">
+                  If this server is lost for good, run this on <strong>{standby.hostname}</strong>. It makes the standby the database and
+                  starts justdeploy there, at port 8080 of that server.
+                </p>
+                <CodeLine value={r.promote_command} />
+              </div>
+              {can("admin") && (
+                <div>
+                  <Button variant="tertiary" className="-ml-3.5 h-8" busy={pick.isPending} onClick={() => pick.mutate(null)}>
+                    Remove the standby
+                  </Button>
+                </div>
+              )}
+            </div>
+          ) : candidates.length === 0 ? (
+            <p className="text-muted">Needs another manager: it takes over the cluster if this server is lost.</p>
+          ) : can("admin") ? (
+            <div className="grid grid-cols-1 gap-3">
+              <p className="text-muted">
+                A copy that follows every change, on another manager. It gets justdeploy's settings, master key included, to start from.
+              </p>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                <Field label="Keep it on" className="sm:w-64">
+                  <Select value={choice || candidates[0]?.id} onChange={(e) => setChoice(e.target.value)}>
+                    {candidates.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.hostname}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Button busy={pick.isPending} onClick={() => pick.mutate(choice || candidates[0]?.id || null)}>
+                  Start the standby
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <p className="text-muted">An admin can start one.</p>
+          )}
+        </Step>
+      </ol>
+    </Card>
   );
 }
 
@@ -142,7 +335,14 @@ function Meter({ label, percent, detail }: { label: string; percent?: number; de
       <div className="flex items-baseline justify-between gap-2 text-[13px]">
         <span className="text-muted">{label}</span>
       </div>
-      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-subtle" role="meter" aria-label={label} aria-valuenow={Math.round(p)} aria-valuemin={0} aria-valuemax={100}>
+      <div
+        className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-subtle"
+        role="meter"
+        aria-label={label}
+        aria-valuenow={Math.round(p)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+      >
         <div className={cx("h-full rounded-full", p > 95 ? "bg-err" : p > 80 ? "bg-warn" : "bg-fg/70")} style={{ width: `${p}%` }} />
       </div>
       <p className="mt-1 truncate text-[12px] text-muted">{detail}</p>
@@ -172,7 +372,10 @@ function LabelEditor({
   const submit = (e: FormEvent) => {
     e.preventDefault();
     const labels: Record<string, string> = {};
-    for (const line of text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)) {
+    for (const line of text
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean)) {
       const [k, ...v] = line.split("=");
       if (!k?.trim() || v.length === 0) return setError(`${line}: write it as key=value`);
       labels[k.trim()] = v.join("=").trim();
@@ -206,7 +409,10 @@ function LabelEditor({
 
 /** The steps to add a server, with a live wait for it to show up. */
 function AddServer({ count, servers, onClose }: { count: number; servers: ClusterServer[]; onClose: () => void }) {
-  const join = useQuery({ queryKey: ["server-join"], queryFn: () => api.get<{ command: string; manager_address: string }>("/servers/join") });
+  const join = useQuery({
+    queryKey: ["server-join"],
+    queryFn: () => api.get<{ command: string; manager_address: string }>("/servers/join"),
+  });
   const settings = useQuery({ queryKey: ["settings"], queryFn: () => api.get<Settings>("/settings") });
   // Whatever is in the list when the panel opens is "before"; anything new joined.
   const before = useRef<Set<string> | null>(null);
@@ -225,7 +431,7 @@ function AddServer({ count, servers, onClose }: { count: number; servers: Cluste
       >
         Add a server
       </SectionTitle>
-      <ol className="grid max-w-3xl">
+      <ol className="grid max-w-3xl grid-cols-1">
         <Step n={1} state={joined.length ? "done" : "current"} title="Install Docker on the new server">
           <p className="text-muted">
             Any Linux server with Docker 24 or newer, reachable from this one. It needs nothing else: justdeploy keeps running here and
@@ -245,11 +451,7 @@ function AddServer({ count, servers, onClose }: { count: number; servers: Cluste
           <p className="mt-2 text-[13px] text-muted">Keep them closed to the internet: only your servers should reach them.</p>
         </Step>
         <Step n={3} state={joined.length ? "done" : "current"} title="Run this on the new server">
-          {join.isError ? (
-            <ErrorText error={join.error} />
-          ) : (
-            <CodeLine value={join.data?.command ?? "Loading…"} secret />
-          )}
+          {join.isError ? <ErrorText error={join.error} /> : <CodeLine value={join.data?.command ?? "Loading…"} secret />}
           <p className="mt-2 text-[13px] text-muted">The token in it lets a machine join, so treat it like a password.</p>
         </Step>
         <Step n={4} state={joined.length ? "done" : "todo"} title={joined.length ? "Joined" : "Waiting for it to join"} last>

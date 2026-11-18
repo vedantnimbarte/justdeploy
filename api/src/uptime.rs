@@ -268,6 +268,74 @@ fn incidents(downs: &[DateTime<Utc>], still_down: bool) -> Vec<Incident> {
         .collect()
 }
 
+// ---------------------------------------------------------------- domains
+
+/// Every ten minutes: whether each custom domain still resolves to the
+/// cluster. A change either way is reported once; "unknown" (this server's own
+/// address can't be worked out) changes nothing.
+pub async fn check_domains(state: SharedState) -> Result<()> {
+    let rows = sqlx::query!(
+        r#"SELECT d.id, d.hostname, d.dns_ok, s.id AS service_id, s.name AS service
+           FROM domains d JOIN services s ON s.id = d.service_id
+           WHERE s.desired_state = 'running'"#
+    )
+    .fetch_all(&state.db)
+    .await?;
+    for row in rows {
+        let status = crate::handlers::admin::check_host(&state, &row.hostname)
+            .await?
+            .status;
+        let Some(ok) = domain_ok(status) else {
+            continue;
+        };
+        if row.dns_ok == Some(ok) {
+            continue;
+        }
+        sqlx::query!("UPDATE domains SET dns_ok = $2 WHERE id = $1", row.id, ok)
+            .execute(&state.db)
+            .await?;
+        let path = format!("/services/{}?tab=domains", row.service_id);
+        match (row.dns_ok, ok) {
+            (Some(true), false) => notify::send(
+                &state,
+                notify::Event {
+                    kind: "domain.unreachable",
+                    text: format!(
+                        "{} no longer points at this server ({}), so {} isn't reachable there.",
+                        row.hostname,
+                        if status == "missing" {
+                            "it has no DNS record"
+                        } else {
+                            "its record points elsewhere"
+                        },
+                        row.service
+                    ),
+                    path,
+                },
+            ),
+            (Some(false), true) => notify::send(
+                &state,
+                notify::Event {
+                    kind: "domain.reachable",
+                    text: format!("{} points at this server again.", row.hostname),
+                    path,
+                },
+            ),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// A DNS check's status as connected or not; None when it can't be told.
+fn domain_ok(status: &str) -> Option<bool> {
+    match status {
+        "connected" => Some(true),
+        "missing" | "elsewhere" => Some(false),
+        _ => None,
+    }
+}
+
 // ---------------------------------------------------------------- status page
 
 #[derive(Serialize)]
@@ -383,6 +451,13 @@ pub async fn configure(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_dns_changes_nothing() {
+        assert_eq!(domain_ok("connected"), Some(true));
+        assert_eq!(domain_ok("elsewhere"), Some(false));
+        assert_eq!(domain_ok("unknown"), None);
+    }
 
     #[test]
     fn down_needs_two_misses_and_recovery_is_reported_once() {

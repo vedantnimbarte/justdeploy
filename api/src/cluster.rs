@@ -58,6 +58,27 @@ static SELF_NODE: OnceLock<String> = OnceLock::new();
 /// The control plane's container name, when it runs in one: how the status
 /// page proxy on `jd-mesh` reaches it.
 static CONTROL_PLANE: OnceLock<String> = OnceLock::new();
+/// The Traefik and Postgres started with justdeploy (compose): container id and name.
+static COMPOSE_TRAEFIK: OnceLock<(String, String)> = OnceLock::new();
+static COMPOSE_POSTGRES: OnceLock<(String, String)> = OnceLock::new();
+const LABEL_NODE: &str = "jd.node";
+
+/// The compose Traefik, which issues certificates: (container id, name).
+pub fn compose_traefik() -> Option<(&'static str, &'static str)> {
+    COMPOSE_TRAEFIK
+        .get()
+        .map(|(id, name)| (id.as_str(), name.as_str()))
+}
+
+/// The compose Postgres holding justdeploy's data: its container id.
+pub fn compose_postgres() -> Option<&'static str> {
+    COMPOSE_POSTGRES.get().map(|(id, _)| id.as_str())
+}
+
+/// Its name, which reaches it on `jd-control`.
+pub fn compose_postgres_name() -> Option<&'static str> {
+    COMPOSE_POSTGRES.get().map(|(_, name)| name.as_str())
+}
 const STATUS: &str = "jd-status";
 const LABEL_STATUS_HOSTS: &str = "jd.status-hosts";
 
@@ -96,6 +117,7 @@ pub async fn ensure(state: &SharedState) -> anyhow::Result<()> {
         .swarm
         .and_then(|s| s.node_id)
         .ok_or_else(|| anyhow!("Docker didn't report this server's Swarm node id"))?;
+    crate::ha::claim(&state.docker, &node).await?;
     let _ = SELF_NODE.set(node);
     docker::ensure_overlay(&state.docker, MESH, false).await?;
     docker::ensure_overlay(&state.docker, CONTROL, true).await?;
@@ -128,23 +150,37 @@ async fn join_networks(state: &SharedState) {
         .and_then(|c| c.labels)
         .and_then(|l| l.get("com.docker.compose.project").cloned());
     let Some(project) = project else { return };
-    let filters = HashMap::from([(
-        "label",
-        vec![
-            format!("com.docker.compose.project={project}"),
-            "com.docker.compose.service=traefik".to_string(),
-        ],
-    )]);
-    let options = ListContainersOptionsBuilder::new()
-        .filters(&filters)
-        .build();
-    for traefik in state
-        .docker
-        .list_containers(Some(options))
-        .await
-        .unwrap_or_default()
-    {
-        connect(state, MESH, &traefik.id.unwrap_or_default()).await;
+    // Traefik routes Swarm services on jd-mesh; a standby copies Postgres over jd-control.
+    for (service, network, slot) in [
+        ("traefik", MESH, &COMPOSE_TRAEFIK),
+        ("postgres", CONTROL, &COMPOSE_POSTGRES),
+    ] {
+        let filters = HashMap::from([(
+            "label",
+            vec![
+                format!("com.docker.compose.project={project}"),
+                format!("com.docker.compose.service={service}"),
+            ],
+        )]);
+        let options = ListContainersOptionsBuilder::new()
+            .filters(&filters)
+            .build();
+        for found in state
+            .docker
+            .list_containers(Some(options))
+            .await
+            .unwrap_or_default()
+        {
+            let id = found.id.unwrap_or_default();
+            connect(state, network, &id).await;
+            let name = found
+                .names
+                .and_then(|n| n.into_iter().next())
+                .unwrap_or_default()
+                .trim_start_matches('/')
+                .to_string();
+            let _ = slot.set((id, name));
+        }
     }
 }
 
@@ -191,11 +227,12 @@ pub async fn refresh(state: SharedState) -> Result<()> {
         let hosts = crate::uptime::status_hosts(&state).await?.join(",");
         let current = docker::workloads(&state.docker, &[(LABEL_KIND, "status")]).await?;
         let shown = current.first().and_then(|s| s.label(LABEL_STATUS_HOSTS));
+        let here = current.first().and_then(|s| s.label(LABEL_NODE)) == Some(self_node());
         if hosts.is_empty() {
             if !current.is_empty() {
                 docker::remove_service(&state.docker, STATUS).await?;
             }
-        } else if shown != Some(hosts.as_str()) {
+        } else if shown != Some(hosts.as_str()) || !here {
             let spec = status_spec(&state, control_plane, &hosts);
             docker::create_service(&state.docker, spec, None).await?;
         }
@@ -203,9 +240,19 @@ pub async fn refresh(state: SharedState) -> Result<()> {
     if state.config.tls() {
         let host = registry_host(&services::base_domain(&state).await?);
         let current = docker::workloads(&state.docker, &[(LABEL_KIND, "registry")]).await?;
-        if current.first().and_then(|r| r.label(LABEL_REGISTRY_HOST)) != Some(host.as_str()) {
+        let here = current.first().and_then(|r| r.label(LABEL_NODE)) == Some(self_node());
+        if current.first().and_then(|r| r.label(LABEL_REGISTRY_HOST)) != Some(host.as_str())
+            || !here
+        {
             docker::create_service(&state.docker, registry_spec(&state, &host), None).await?;
         }
+    }
+    // Routing on other managers and the standby: each failing alone.
+    if let Err(error) = crate::ha::refresh_routing(&state).await {
+        tracing::warn!(%error, "edge routing not updated");
+    }
+    if let Err(error) = crate::ha::refresh_standby(&state).await {
+        tracing::warn!(%error, "standby not updated");
     }
     Ok(())
 }
@@ -292,6 +339,7 @@ fn status_spec(state: &SharedState, control_plane: &str, hosts: &str) -> Service
         (MANAGED.to_string(), "true".to_string()),
         (LABEL_KIND.to_string(), "status".to_string()),
         (LABEL_STATUS_HOSTS.to_string(), hosts.to_string()),
+        (LABEL_NODE.to_string(), self_node().to_string()),
         ("traefik.enable".to_string(), "true".to_string()),
         ("traefik.swarm.network".to_string(), MESH.to_string()),
         (format!("traefik.http.routers.{r}.rule"), rule),
@@ -367,6 +415,7 @@ fn registry_spec(state: &SharedState, host: &str) -> ServiceSpec {
         (MANAGED.to_string(), "true".to_string()),
         (LABEL_KIND.to_string(), "registry".to_string()),
         (LABEL_REGISTRY_HOST.to_string(), host.to_string()),
+        (LABEL_NODE.to_string(), self_node().to_string()),
         ("traefik.enable".to_string(), "true".to_string()),
         ("traefik.swarm.network".to_string(), MESH.to_string()),
         (
@@ -462,6 +511,165 @@ fn credentials(state: &SharedState, host: &str) -> DockerCredentials {
     }
 }
 
+/// Daily: tags in the registry that no deployment needs any more (not running,
+/// not among a service's newest kept for rollback) are deleted, then the
+/// registry's garbage collector frees their layers.
+pub async fn clean_registry(state: SharedState) -> Result<()> {
+    if !state.config.tls() {
+        return Ok(());
+    }
+    let Some(container) = docker::local_task(&state.docker, REGISTRY).await? else {
+        return Ok(());
+    };
+    let host = registry_host(&services::base_domain(&state).await?);
+    let keep: std::collections::HashSet<String> = sqlx::query_scalar!(
+        r#"SELECT DISTINCT image_ref AS "image!" FROM (
+             SELECT image_ref, status, row_number() OVER (
+               PARTITION BY service_id, kind, pr_number ORDER BY created_at DESC) AS n
+             FROM deployments WHERE image_ref IS NOT NULL) d
+           WHERE n <= $1 OR status IN ('queued', 'building', 'deploying', 'running')"#,
+        crate::queue::deploy::KEEP_IMAGES
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .collect();
+
+    // In its container the control plane is on jd-mesh with the registry;
+    // otherwise (development) it goes the public way, with the password.
+    let (base, auth) = if CONTROL_PLANE.get().is_some() {
+        (format!("http://{REGISTRY}:5000"), None)
+    } else {
+        (format!("https://{host}"), Some(registry_password(&state)))
+    };
+    let deleted = prune_registry(&base, auth.as_deref(), &host, &keep)
+        .await
+        .map_err(Error::Internal)?;
+    if deleted == 0 {
+        return Ok(());
+    }
+    // Collecting while an image is pushed could drop its new layers; wait for a quiet day.
+    let busy = sqlx::query_scalar!(
+        r#"SELECT count(*) AS "n!" FROM deployments WHERE status IN ('building', 'deploying')"#
+    )
+    .fetch_one(&state.db)
+    .await?;
+    if busy > 0 {
+        return Ok(());
+    }
+    let (code, output) = docker::exec(
+        &state.docker,
+        &container,
+        "root",
+        "registry garbage-collect --delete-untagged /etc/docker/registry/config.yml",
+    )
+    .await
+    .map_err(Error::Internal)?;
+    if code != 0 {
+        tracing::warn!(output = output.trim(), "registry garbage collection failed");
+    } else {
+        tracing::info!(deleted, "removed old images from the registry");
+    }
+    Ok(())
+}
+
+/// Deletes every manifest in the registry at `base` that no tag in `keep`
+/// (as `host/repo:tag`) points at. Returns how many went.
+async fn prune_registry(
+    base: &str,
+    password: Option<&str>,
+    host: &str,
+    keep: &std::collections::HashSet<String>,
+) -> anyhow::Result<usize> {
+    #[derive(serde::Deserialize)]
+    struct Catalog {
+        repositories: Vec<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Tags {
+        tags: Option<Vec<String>>,
+    }
+    const MANIFESTS: &str = "application/vnd.oci.image.index.v1+json, \
+        application/vnd.docker.distribution.manifest.list.v2+json, \
+        application/vnd.oci.image.manifest.v1+json, \
+        application/vnd.docker.distribution.manifest.v2+json";
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+    let request = |method: reqwest::Method, url: String| {
+        let r = client.request(method, url);
+        match password {
+            Some(p) => r.basic_auth(REGISTRY_USER, Some(p)),
+            None => r,
+        }
+    };
+    // The registry hands the catalog out a page (at most 1000) at a time.
+    let mut repositories: Vec<String> = Vec::new();
+    loop {
+        let after = repositories
+            .last()
+            .map(|r| format!("&last={r}"))
+            .unwrap_or_default();
+        let page: Catalog = request(
+            reqwest::Method::GET,
+            format!("{base}/v2/_catalog?n=1000{after}"),
+        )
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+        let full = page.repositories.len() == 1000;
+        repositories.extend(page.repositories);
+        if !full {
+            break;
+        }
+    }
+    let mut deleted = 0;
+    for repo in repositories {
+        let tags: Tags = request(reqwest::Method::GET, format!("{base}/v2/{repo}/tags/list"))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        // A digest goes only when no kept tag shares it.
+        let mut kept = std::collections::HashSet::new();
+        let mut stale = std::collections::HashSet::new();
+        for tag in tags.tags.unwrap_or_default() {
+            let digest = request(
+                reqwest::Method::HEAD,
+                format!("{base}/v2/{repo}/manifests/{tag}"),
+            )
+            .header(reqwest::header::ACCEPT, MANIFESTS)
+            .send()
+            .await?
+            .error_for_status()?
+            .headers()
+            .get("docker-content-digest")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+            let Some(digest) = digest else { continue };
+            if keep.contains(&format!("{host}/{repo}:{tag}")) {
+                kept.insert(digest);
+            } else {
+                stale.insert(digest);
+            }
+        }
+        for digest in stale.difference(&kept) {
+            request(
+                reqwest::Method::DELETE,
+                format!("{base}/v2/{repo}/manifests/{digest}"),
+            )
+            .send()
+            .await?
+            .error_for_status()?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
+}
+
 // ---------------------------------------------------------------- placement
 
 /// Where a service's copies may run: its pinned server, this server for an
@@ -532,6 +740,37 @@ pub async fn running_container(
 
 // ---------------------------------------------------------------- servers
 
+/// The address a server is reached on. Swarm sometimes reports a manager's as
+/// 0.0.0.0; its management address says where it really is.
+pub fn node_address(node: &bollard::models::Node) -> String {
+    let reported = node
+        .status
+        .as_ref()
+        .and_then(|s| s.addr.clone())
+        .unwrap_or_default();
+    if reported.is_empty() || reported == "0.0.0.0" {
+        if let Some(addr) = node.manager_status.as_ref().and_then(|m| m.addr.as_deref()) {
+            return addr
+                .rsplit_once(':')
+                .map_or(addr, |(host, _)| host)
+                .to_string();
+        }
+    }
+    reported
+}
+
+/// The addresses of every manager that's up: each one routes traffic.
+pub async fn manager_addresses(state: &SharedState) -> Vec<std::net::IpAddr> {
+    let Ok(nodes) = state.docker.list_nodes(None::<ListNodesOptions>).await else {
+        return vec![];
+    };
+    nodes
+        .into_iter()
+        .filter(|n| n.manager_status.is_some())
+        .filter_map(|n| node_address(&n).parse().ok())
+        .collect()
+}
+
 #[derive(Serialize)]
 pub struct Server {
     id: String,
@@ -601,6 +840,7 @@ pub async fn servers(state: &SharedState) -> Result<Vec<Server>> {
     let mut out: Vec<Server> = nodes
         .into_iter()
         .map(|n| {
+            let address = node_address(&n);
             let id = n.id.unwrap_or_default();
             let spec = n.spec.unwrap_or_default();
             let description = n.description.unwrap_or_default();
@@ -614,7 +854,7 @@ pub async fn servers(state: &SharedState) -> Result<Vec<Server>> {
                 this: id == self_node(),
                 state: status.state.map(|s| s.to_string()).unwrap_or_default(),
                 availability: spec.availability.map(|a| a.to_string()).unwrap_or_default(),
-                address: status.addr.unwrap_or_default(),
+                address,
                 cpus: resources.nano_cpus.unwrap_or(0) as f64 / 1e9,
                 memory_bytes: resources.memory_bytes.unwrap_or(0),
                 platform: format!(
@@ -626,7 +866,13 @@ pub async fn servers(state: &SharedState) -> Result<Vec<Server>> {
                     .engine
                     .and_then(|e| e.engine_version)
                     .unwrap_or_default(),
-                labels: spec.labels.unwrap_or_default(),
+                // justdeploy's own (`jd.`) aren't the server's to edit.
+                labels: spec
+                    .labels
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|(k, _)| !k.starts_with("jd."))
+                    .collect(),
                 tasks: tasks
                     .iter()
                     .filter(|t| t.node_id.as_deref() == Some(id.as_str()))
@@ -670,16 +916,30 @@ pub async fn join(state: &SharedState) -> Result<Join> {
 }
 
 /// `availability`: active, drain (move everything off) or pause (take nothing
-/// new). `labels` replaces the server's labels.
+/// new). `role`: manager (can run the cluster, routes traffic) or worker.
+/// `labels` replaces the server's own labels; justdeploy's (`jd.`) stay.
 pub async fn update_server(
     state: &SharedState,
     id: &str,
     availability: Option<&str>,
+    role: Option<&str>,
     labels: Option<HashMap<String, String>>,
 ) -> Result<()> {
     let node = state.docker.inspect_node(id).await?;
     let version = node.version.and_then(|v| v.index).unwrap_or(0);
     let mut spec = node.spec.unwrap_or_default();
+    if let Some(r) = role {
+        if id == self_node() && r != "manager" {
+            return Err(bad_request(
+                "justdeploy runs on this server; it has to stay a manager",
+            ));
+        }
+        spec.role = Some(match r {
+            "manager" => bollard::models::NodeSpecRoleEnum::MANAGER,
+            "worker" => bollard::models::NodeSpecRoleEnum::WORKER,
+            _ => return Err(bad_request("role must be manager or worker")),
+        });
+    }
     if let Some(a) = availability {
         if id == self_node() && a != "active" {
             return Err(bad_request(
@@ -703,7 +963,14 @@ pub async fn update_server(
                 return Err(bad_request(format!("{key:?} is not a valid label name")));
             }
         }
-        spec.labels = Some(labels);
+        let mut merged: HashMap<String, String> = spec
+            .labels
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(k, _)| k.starts_with("jd."))
+            .collect();
+        merged.extend(labels.into_iter().filter(|(k, _)| !k.starts_with("jd.")));
+        spec.labels = Some(merged);
     }
     let options = UpdateNodeOptionsBuilder::new()
         .version(version as i64)
@@ -731,6 +998,14 @@ pub async fn remove_server(state: &SharedState, id: &str) -> Result<()> {
             "{} keep their data on this server; move or delete them first",
             pinned.join(", ")
         )));
+    }
+    let standby = sqlx::query_scalar!("SELECT value FROM settings WHERE key = 'standby_node'")
+        .fetch_optional(&state.db)
+        .await?;
+    if standby.as_deref() == Some(id) {
+        return Err(bad_request(
+            "it keeps justdeploy's standby database; pick another standby first",
+        ));
     }
     let node = state.docker.inspect_node(id).await?;
     let down = node
@@ -876,6 +1151,31 @@ mod tests {
             Some(2),
             "below the minimum after a change"
         );
+    }
+
+    /// Against a registry with `jd-test:keep` and `jd-test:same` (one image) and
+    /// `jd-test:old` (another): only `old` goes.
+    #[tokio::test]
+    #[ignore = "needs a registry; set JD_TEST_REGISTRY=http://127.0.0.1:25000"]
+    async fn stale_registry_tags_go_and_shared_images_stay() {
+        let base = std::env::var("JD_TEST_REGISTRY").unwrap();
+        let host = base.trim_start_matches("http://").to_string();
+        let keep = std::collections::HashSet::from([format!("{host}/jd-test:keep")]);
+        assert_eq!(prune_registry(&base, None, &host, &keep).await.unwrap(), 1);
+        let tags: serde_json::Value = reqwest::get(format!("{base}/v2/jd-test/tags/list"))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let mut tags: Vec<&str> = tags["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| t.as_str())
+            .collect();
+        tags.sort();
+        assert_eq!(tags, vec!["keep", "same"]);
     }
 
     #[test]

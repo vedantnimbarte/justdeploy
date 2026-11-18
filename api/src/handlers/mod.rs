@@ -1,4 +1,4 @@
-mod admin;
+pub mod admin;
 mod auth;
 mod overview;
 mod projects;
@@ -30,6 +30,10 @@ pub fn router(state: SharedState) -> Router {
         )
         .route("/auth/two-factor/confirm", post(auth::confirm_two_factor))
         .route(
+            "/auth/two-factor/recovery-codes",
+            post(auth::new_recovery_codes),
+        )
+        .route(
             "/auth/tokens",
             get(auth::list_tokens).post(auth::create_token),
         )
@@ -57,6 +61,8 @@ pub fn router(state: SharedState) -> Router {
             "/servers/{id}",
             patch(admin::update_server).delete(admin::remove_server),
         )
+        .route("/cluster/resilience", get(admin::resilience))
+        .route("/cluster/standby", put(admin::set_standby))
         // GitHub App
         .route("/github", get(admin::github_overview))
         .route("/github/manifest", post(admin::github_manifest))
@@ -96,6 +102,15 @@ pub fn router(state: SharedState) -> Router {
             get(projects::pitr_status).put(projects::configure_pitr),
         )
         .route("/services/{id}/pitr/restore", post(projects::pitr_restore))
+        .route("/services/{id}/copy", post(projects::copy_database))
+        .route(
+            "/services/{id}/copies",
+            get(projects::list_copies).post(projects::replace_data),
+        )
+        .route(
+            "/services/{id}/replicas",
+            get(projects::list_replicas).post(projects::create_replica),
+        )
         .route(
             "/services/{id}",
             get(projects::get_service)
@@ -149,6 +164,12 @@ pub fn router(state: SharedState) -> Router {
             get(admin::get_settings).put(admin::put_settings),
         )
         .route("/dns-check", get(admin::dns_check))
+        .route(
+            "/settings/smtp",
+            get(admin::get_smtp)
+                .put(admin::put_smtp)
+                .delete(admin::delete_smtp),
+        )
         .route(
             "/notification-channels",
             get(admin::list_channels).post(admin::create_channel),

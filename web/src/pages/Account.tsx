@@ -2,16 +2,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { api, ROLE_HINT, ROLE_LABEL, timeAgo, type ApiToken } from "../api";
 import { useMe } from "../me";
-import { Band, Button, Card, CodeLine, ErrorText, Field, Input, PageHeader, SectionTitle, useToast } from "../ui";
+import { Band, Button, Card, CodeLine, CopyButton, ErrorText, Field, Input, PageHeader, SectionTitle, useToast } from "../ui";
 
 export default function AccountPage() {
   const { me } = useMe();
   return (
     <>
-      <PageHeader
-        title="Account"
-        lead={me ? `${me.email}, ${ROLE_LABEL[me.role].toLowerCase()}. ${ROLE_HINT[me.role]}` : undefined}
-      />
+      <PageHeader title="Account" lead={me ? `${me.email}, ${ROLE_LABEL[me.role].toLowerCase()}. ${ROLE_HINT[me.role]}` : undefined} />
       <Band className="grid max-w-4xl gap-6">
         <TwoFactor />
         <Tokens />
@@ -33,12 +30,22 @@ function TwoFactor() {
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["me"] });
 
   const start = useMutation({ mutationFn: () => api.post<Setup>("/auth/two-factor"), onSuccess: setSetup });
+  const [codes, setCodes] = useState<string[] | null>(null);
   const confirm = useMutation({
-    mutationFn: () => api.post("/auth/two-factor/confirm", { code }),
-    onSuccess: () => {
+    mutationFn: () => api.post<string[]>("/auth/two-factor/confirm", { code }),
+    onSuccess: (recovery) => {
       toast("Two-factor sign-in is on");
       setSetup(null);
       setCode("");
+      setCodes(recovery);
+      refresh();
+    },
+  });
+  const renew = useMutation({
+    mutationFn: () => api.post<string[]>("/auth/two-factor/recovery-codes", { password }),
+    onSuccess: (recovery) => {
+      setPassword("");
+      setCodes(recovery);
       refresh();
     },
   });
@@ -55,23 +62,38 @@ function TwoFactor() {
     <Card>
       <SectionTitle>Two-factor sign-in</SectionTitle>
       {me?.two_factor ? (
-        <form
-          onSubmit={(e: FormEvent) => (e.preventDefault(), disable.mutate())}
-          className="grid gap-4"
-        >
-          <p>
-            <strong>On.</strong> Signing in asks for a code from your authenticator app. If you lose your phone, an owner can turn it
-            off for you under Team.
+        <form onSubmit={(e: FormEvent) => (e.preventDefault(), disable.mutate())} className="grid gap-4">
+          <p className="max-w-[68ch]">
+            <strong>On.</strong> Signing in asks for a code from your authenticator app. Lost your phone? Sign in with a recovery code
+            instead, or ask an owner to turn it off for you under Team.
           </p>
+          {codes ? (
+            <RecoveryCodes codes={codes} onDone={() => setCodes(null)} />
+          ) : (
+            <p className={me.recovery_codes_left <= 2 ? "text-err" : "text-muted"}>
+              {me.recovery_codes_left === 0
+                ? "No recovery codes left. Make new ones below."
+                : `${me.recovery_codes_left} recovery code${me.recovery_codes_left === 1 ? "" : "s"} left.`}
+            </p>
+          )}
           <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-            <Field label="Password, to turn it off" className="sm:w-72">
-              <Input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+            <Field label="Your password" className="sm:w-72">
+              <Input
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
             </Field>
+            <Button variant="secondary" busy={renew.isPending} disabled={!password} onClick={() => renew.mutate()}>
+              New recovery codes
+            </Button>
             <Button type="submit" variant="danger" busy={disable.isPending}>
               Turn off
             </Button>
           </div>
-          <ErrorText error={disable.error} />
+          <ErrorText error={disable.error ?? renew.error} />
         </form>
       ) : setup ? (
         <form onSubmit={(e: FormEvent) => (e.preventDefault(), confirm.mutate())} className="grid gap-6 md:grid-cols-[auto_minmax(0,1fr)]">
@@ -117,7 +139,9 @@ function TwoFactor() {
         </form>
       ) : (
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <p className="max-w-[60ch]">Off. With it on, signing in also asks for a code from an app on your phone, so a leaked password isn't enough.</p>
+          <p className="max-w-[60ch]">
+            Off. With it on, signing in also asks for a code from an app on your phone, so a leaked password isn't enough.
+          </p>
           <Button busy={start.isPending} onClick={() => start.mutate()}>
             Set up
           </Button>
@@ -125,6 +149,41 @@ function TwoFactor() {
         </div>
       )}
     </Card>
+  );
+}
+
+/** Shown once: the codes that stand in for the authenticator. */
+function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () => void }) {
+  const text = codes.join("\n");
+  return (
+    <div className="rounded-panel border border-ok/40 bg-ok/5 p-4">
+      <p className="mb-1 font-medium">Save these recovery codes somewhere safe, like a password manager.</p>
+      <p className="mb-3 max-w-[68ch] text-sm text-muted">
+        Each signs you in once without your phone. They won't be shown again; making new ones replaces them.
+      </p>
+      <ol className="mb-4 grid grid-cols-2 gap-x-6 gap-y-1 font-mono text-[15px] sm:grid-cols-5 sm:w-fit">
+        {codes.map((c) => (
+          <li key={c}>{c}</li>
+        ))}
+      </ol>
+      <div className="flex flex-wrap gap-2">
+        <CopyButton value={text} label="Copy all" />
+        <Button
+          variant="secondary"
+          onClick={() => {
+            const url = URL.createObjectURL(new Blob([text + "\n"], { type: "text/plain" }));
+            const a = Object.assign(document.createElement("a"), { href: url, download: "justdeploy-recovery-codes.txt" });
+            a.click();
+            URL.revokeObjectURL(url);
+          }}
+        >
+          Download
+        </Button>
+        <Button variant="tertiary" onClick={onDone}>
+          I've saved them
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -160,9 +219,7 @@ function Tokens() {
       </p>
       {created && (
         <div className="mb-5 rounded-panel border border-ok/40 bg-ok/5 p-4">
-          <p className="mb-2 text-sm font-medium">
-            {created.name} is ready. Copy it now: it won't be shown again.
-          </p>
+          <p className="mb-2 text-sm font-medium">{created.name} is ready. Copy it now: it won't be shown again.</p>
           <CodeLine value={created.value} />
         </div>
       )}
@@ -184,7 +241,14 @@ function Tokens() {
         </ul>
       )}
       <form onSubmit={(e: FormEvent) => (e.preventDefault(), create.mutate())} className="flex flex-col gap-2 sm:flex-row">
-        <Input aria-label="Token name" placeholder="github-actions" value={name} onChange={(e) => setName(e.target.value)} required className="sm:max-w-xs" />
+        <Input
+          aria-label="Token name"
+          placeholder="github-actions"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+          className="sm:max-w-xs"
+        />
         <Button type="submit" busy={create.isPending}>
           Create token
         </Button>
@@ -216,7 +280,14 @@ function PasswordForm() {
           <Input type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} required />
         </Field>
         <Field label="New password" hint="At least 10 characters.">
-          <Input type="password" autoComplete="new-password" minLength={10} value={next} onChange={(e) => setNext(e.target.value)} required />
+          <Input
+            type="password"
+            autoComplete="new-password"
+            minLength={10}
+            value={next}
+            onChange={(e) => setNext(e.target.value)}
+            required
+          />
         </Field>
         <div className="md:col-span-2">
           <ErrorText error={change.error} />

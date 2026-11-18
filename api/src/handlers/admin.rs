@@ -94,6 +94,8 @@ pub async fn join_server(
 pub struct ServerUpdate {
     /// active | drain | pause
     availability: Option<String>,
+    /// manager | worker
+    role: Option<String>,
     labels: Option<std::collections::HashMap<String, String>>,
 }
 
@@ -103,7 +105,38 @@ pub async fn update_server(
     Path(id): Path<String>,
     Json(body): Json<ServerUpdate>,
 ) -> Result<StatusCode> {
-    cluster::update_server(&state, &id, body.availability.as_deref(), body.labels).await?;
+    cluster::update_server(
+        &state,
+        &id,
+        body.availability.as_deref(),
+        body.role.as_deref(),
+        body.labels,
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Routing on every manager, and the standby of justdeploy's database.
+pub async fn resilience(
+    _: Viewer,
+    State(state): State<SharedState>,
+) -> Result<Json<crate::ha::Resilience>> {
+    Ok(Json(crate::ha::status(&state).await?))
+}
+
+#[derive(Deserialize)]
+pub struct StandbyChoice {
+    /// A manager's id; null removes the standby.
+    node: Option<String>,
+}
+
+/// Admins only: the standby gets justdeploy's settings, master key included.
+pub async fn set_standby(
+    _: Admin,
+    State(state): State<SharedState>,
+    Json(body): Json<StandbyChoice>,
+) -> Result<StatusCode> {
+    crate::ha::set_standby(&state, body.node).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -192,6 +225,27 @@ pub async fn create_channel(
     Ok((StatusCode::CREATED, Json(json!({ "id": id }))))
 }
 
+pub async fn get_smtp(
+    _: Admin,
+    State(state): State<SharedState>,
+) -> Result<Json<Option<notify::SmtpView>>> {
+    Ok(Json(notify::smtp_view(&state).await?))
+}
+
+pub async fn put_smtp(
+    _: Admin,
+    State(state): State<SharedState>,
+    Json(body): Json<notify::SmtpUpdate>,
+) -> Result<StatusCode> {
+    notify::set_smtp(&state, body).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn delete_smtp(_: Admin, State(state): State<SharedState>) -> Result<StatusCode> {
+    notify::remove_smtp(&state).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub async fn delete_channel(
     _: Admin,
     State(state): State<SharedState>,
@@ -215,7 +269,7 @@ pub struct DnsCheck {
     found: Vec<IpAddr>,
     /// "connected", "missing" (no record), "elsewhere" (another server) or
     /// "unknown" (this server's own address could not be worked out).
-    status: &'static str,
+    pub status: &'static str,
 }
 
 /// Whether a hostname resolves to this server. A wildcard (`*.example.com`) is
@@ -225,7 +279,13 @@ pub async fn dns_check(
     State(state): State<SharedState>,
     Query(q): Query<DnsQuery>,
 ) -> Result<Json<DnsCheck>> {
-    let host = q.host.trim().to_lowercase();
+    Ok(Json(check_host(&state, &q.host).await?))
+}
+
+/// Whether `host` resolves to this cluster: the dashboard's address, where the
+/// generated hostnames resolve, or any manager (they all route traffic).
+pub async fn check_host(state: &SharedState, host: &str) -> Result<DnsCheck> {
+    let host = host.trim().to_lowercase();
     let wildcard = host.strip_prefix("*.");
     let probe = wildcard.map_or(host.clone(), |base| format!("jd-dns-check.{base}"));
     names::validate_hostname(&probe)?;
@@ -235,10 +295,11 @@ pub async fn dns_check(
     let url = &state.config.public_url;
     let authority = url.split("://").last().unwrap_or(url);
     let mut expected = resolve(authority.split('/').next().unwrap_or_default()).await;
-    let base = services::base_domain(&state).await?;
+    let base = services::base_domain(state).await?;
     if wildcard.is_none() && base != "localhost" {
         expected.extend(resolve(&format!("jd-dns-check.{base}")).await);
     }
+    expected.extend(crate::cluster::manager_addresses(state).await);
     expected.retain(|ip| !ip.is_loopback());
     expected.sort_by_key(|ip| {
         (
@@ -259,11 +320,11 @@ pub async fn dns_check(
     } else {
         "elsewhere"
     };
-    Ok(Json(DnsCheck {
+    Ok(DnsCheck {
         expected,
         found,
         status,
-    }))
+    })
 }
 
 /// Addresses for `host` or `host:port`; empty when it does not resolve in 5s.

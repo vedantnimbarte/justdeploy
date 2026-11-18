@@ -407,6 +407,75 @@ pub struct PitrRestore {
     target: chrono::DateTime<chrono::Utc>,
 }
 
+/// A new database with this one's data.
+pub async fn copy_database(
+    _: Member,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> Result<(StatusCode, Json<Service>)> {
+    let source = services::get_service(&state.db, id).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(crate::data::create_copy(&state, &source).await?),
+    ))
+}
+
+pub async fn list_copies(
+    _: Viewer,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<crate::data::Copy>>> {
+    Ok(Json(crate::data::list(&state, id).await?))
+}
+
+#[derive(Deserialize)]
+pub struct ReplaceData {
+    /// The database whose data replaces this one's.
+    from: Uuid,
+}
+
+/// Replaces this database's data with another's. Admins, like restores.
+pub async fn replace_data(
+    _: crate::auth::Admin,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ReplaceData>,
+) -> Result<(StatusCode, Json<serde_json::Value>)> {
+    let target = services::get_service(&state.db, id).await?;
+    let source = services::get_service(&state.db, body.from).await?;
+    if source.project_id != target.project_id {
+        return Err(crate::error::bad_request(
+            "pick a database from the same project",
+        ));
+    }
+    let copy = crate::data::replace(&state, &target, &source).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({ "id": copy })),
+    ))
+}
+
+pub async fn list_replicas(
+    _: Viewer,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<crate::data::Replica>>> {
+    let primary = services::get_service(&state.db, id).await?;
+    Ok(Json(crate::data::replicas(&state, &primary).await?))
+}
+
+pub async fn create_replica(
+    _: Member,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> Result<(StatusCode, Json<Service>)> {
+    let primary = services::get_service(&state.db, id).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(crate::data::create_replica(&state, &primary).await?),
+    ))
+}
+
 pub async fn pitr_restore(
     _: Member,
     State(state): State<SharedState>,

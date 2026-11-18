@@ -1,0 +1,42 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.state, pg_wal_lsn_diff(pg_current_wal_lsn(), r.replay_lsn)::bigint AS lag,\n                          extract(epoch FROM r.replay_lag)::float8 AS seconds\n                   FROM pg_replication_slots s JOIN pg_stat_replication r ON r.pid = s.active_pid\n                   WHERE s.slot_name = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "state",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pg_stat_replication",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "lag",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "seconds",
+        "type_info": "Float8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Name"
+      ]
+    },
+    "nullable": [
+      true,
+      null,
+      null
+    ]
+  },
+  "hash": "e32329d5a902f2fef7540c7859bada09d77aa0ea6faf9bf5f5a222a6ba4f14e2"
+}

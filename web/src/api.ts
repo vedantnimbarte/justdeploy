@@ -89,6 +89,8 @@ export interface Service {
   node_label: string | null;
   on_status_page: boolean;
   pitr_destination_id: string | null;
+  /** A Postgres read replica: the database it follows. */
+  replica_of: string | null;
   desired_state: "running" | "stopped" | "deleting";
   current_deployment_id: string | null;
   created_at: string;
@@ -119,6 +121,8 @@ export interface Domain {
   id: string;
   hostname: string;
   created_at: string;
+  /** Whether it last resolved to the cluster; null until checked. */
+  dns_ok: boolean | null;
 }
 
 export interface ServiceDetail extends Service {
@@ -174,7 +178,7 @@ export interface Run {
 export interface NotificationChannel {
   id: string;
   name: string;
-  kind: "slack" | "discord" | "webhook";
+  kind: "slack" | "discord" | "webhook" | "email";
   notify_success: boolean;
   target: string;
   created_at: string;
@@ -199,6 +203,7 @@ export interface Person {
   email: string;
   role: Role;
   two_factor: boolean;
+  recovery_codes_left: number;
   created_at: string;
 }
 
@@ -293,6 +298,48 @@ export interface StatusPageData {
   title: string;
   overall: "operational" | "degraded" | "down";
   services: ServiceUptime[];
+}
+
+export interface SmtpSettings {
+  host: string;
+  port: number;
+  security: "starttls" | "tls" | "none";
+  username: string;
+  has_password: boolean;
+  from: string;
+}
+
+export interface Resilience {
+  edges: { id: string; hostname: string; address: string; running: boolean }[];
+  certificates: number;
+  managers: number;
+  standby: {
+    node: string;
+    hostname: string;
+    state: string;
+    lag_bytes: number | null;
+    lag_seconds: number | null;
+  } | null;
+  promote_command: string;
+}
+
+export interface DataCopy {
+  id: string;
+  source_id: string | null;
+  source: string | null;
+  target_id: string;
+  status: "pending" | "running" | "succeeded" | "failed";
+  error: string | null;
+  created_at: string;
+  finished_at: string | null;
+}
+
+export interface Replica {
+  id: string;
+  name: string;
+  state: string;
+  lag_bytes: number | null;
+  lag_seconds: number | null;
 }
 
 export interface PitrStatus {

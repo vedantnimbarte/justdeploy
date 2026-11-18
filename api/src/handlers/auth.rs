@@ -117,13 +117,31 @@ pub struct Code {
     code: String,
 }
 
+/// Returns the recovery codes, shown once.
 pub async fn confirm_two_factor(
     Can(user): Viewer,
     State(state): State<SharedState>,
     Json(body): Json<Code>,
-) -> Result<StatusCode> {
-    auth::confirm_two_factor(&state, &user, &body.code).await?;
-    Ok(StatusCode::NO_CONTENT)
+) -> Result<Json<Vec<String>>> {
+    Ok(Json(
+        auth::confirm_two_factor(&state, &user, &body.code).await?,
+    ))
+}
+
+/// New recovery codes, replacing the old ones. Asks for the password, so a
+/// stolen session can't mint a way past the authenticator.
+pub async fn new_recovery_codes(
+    Can(user): Viewer,
+    State(state): State<SharedState>,
+    Json(body): Json<Password>,
+) -> Result<Json<Vec<String>>> {
+    if !auth::check_password(&state, &user, &body.password).await? {
+        return Err(bad_request("the password is wrong"));
+    }
+    if !auth::get_user(&state.db, user.id).await?.two_factor() {
+        return Err(bad_request("turn on two-factor sign-in first"));
+    }
+    Ok(Json(auth::new_recovery_codes(&state.db, user.id).await?))
 }
 
 #[derive(Deserialize)]

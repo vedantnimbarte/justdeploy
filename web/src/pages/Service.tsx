@@ -6,6 +6,7 @@ import { useMe } from "../me";
 import { baseName } from "./Environments";
 import { Badge, Band, Button, CodeLine, ErrorText, PageHeader, StatusDot, Tabs, useToast } from "../ui";
 import Backups from "./service/Backups";
+import Data from "./service/Data";
 import Deployments from "./service/Deployments";
 import Domains from "./service/Domains";
 import Env from "./service/Env";
@@ -17,7 +18,7 @@ import ServiceSettings from "./service/ServiceSettings";
 const Metrics = lazy(() => import("./service/Metrics"));
 const Terminal = lazy(() => import("./service/Terminal"));
 
-type Tab = "deployments" | "runs" | "logs" | "env" | "domains" | "metrics" | "terminal" | "backups" | "settings";
+type Tab = "deployments" | "runs" | "logs" | "env" | "domains" | "metrics" | "terminal" | "backups" | "data" | "settings";
 
 export default function ServicePage() {
   const { id = "" } = useParams();
@@ -41,7 +42,12 @@ export default function ServicePage() {
   });
 
   if (service.isPending) return <Band>Loading…</Band>;
-  if (service.isError) return <Band><ErrorText error={service.error} /></Band>;
+  if (service.isError)
+    return (
+      <Band>
+        <ErrorText error={service.error} />
+      </Band>
+    );
   const s = service.data;
 
   const tabs: { id: Tab; label: string }[] = [
@@ -53,6 +59,7 @@ export default function ServicePage() {
     { id: "metrics", label: "Metrics" },
     ...(can("member") ? [{ id: "terminal" as Tab, label: "Terminal" }] : []),
     ...(s.kind === "database" ? [{ id: "backups" as Tab, label: "Backups" }] : []),
+    ...(s.kind === "database" ? [{ id: "data" as Tab, label: s.replica_of ? "Replica" : "Copies and replicas" }] : []),
     { id: "settings", label: "Settings" },
   ];
   const requested = params.get("tab") as Tab | null;
@@ -64,7 +71,8 @@ export default function ServicePage() {
       <PageHeader
         eyebrow={
           <>
-            <Link to="/projects">Projects</Link> / <Link to={`/projects/${s.project.id}`}>
+            <Link to="/projects">Projects</Link> /{" "}
+            <Link to={`/projects/${s.project.id}`}>
               {baseName(s.project)}
               {s.project.environment !== "production" && ` (${s.project.environment})`}
             </Link>
@@ -96,6 +104,11 @@ export default function ServicePage() {
             </span>
           )}
           <Badge>{kindLabel(s)}</Badge>
+          {s.replica_of && (
+            <Link to={`/services/${s.replica_of}?tab=data`} className="text-sm">
+              Read replica
+            </Link>
+          )}
           {s.url && (
             <a href={s.url} target="_blank" rel="noreferrer" className="font-mono text-[13px] break-all">
               {s.url.replace(/^https?:\/\//, "")}
@@ -126,6 +139,7 @@ export default function ServicePage() {
           {tab === "terminal" && <Terminal service={s} />}
         </Suspense>
         {tab === "backups" && <Backups service={s} />}
+        {tab === "data" && <Data service={s} />}
         {tab === "settings" && <ServiceSettings service={s} />}
       </Band>
     </>

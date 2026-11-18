@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
-import { api, timeAgo, type Destination, type NotificationChannel, type Settings } from "../api";
+import { api, timeAgo, type Destination, type NotificationChannel, type Settings, type SmtpSettings } from "../api";
 import { DnsPanel, useDnsCheck } from "../DnsSetup";
 import { useMe } from "../me";
 import { GitHubCard } from "./GitHub";
@@ -27,6 +27,7 @@ export default function SettingsPage() {
       <Band className="grid max-w-4xl gap-6">
         {settings.data && <DomainSettings settings={settings.data} />}
         <GitHubCard />
+        <EmailServer />
         <Notifications />
         <Destinations />
         {settings.data && (
@@ -89,21 +90,20 @@ function DomainSettings({ settings }: { settings: Settings }) {
         <div className="rounded-control bg-subtle p-4">
           {settings.tls ? (
             <p>
-              <strong>TLS is on.</strong> Traefik gets Let's Encrypt certificates for every hostname, registered to{" "}
-              {settings.acme_email}.
+              <strong>TLS is on.</strong> Traefik gets Let's Encrypt certificates for every hostname, registered to {settings.acme_email}.
             </p>
           ) : (
             <p>
-              <strong>TLS is off.</strong> Set <code>JD_ACME_EMAIL</code> and start with the TLS compose file to get
-              Let's Encrypt certificates. See the README.
+              <strong>TLS is off.</strong> Set <code>JD_ACME_EMAIL</code> and start with the TLS compose file to get Let's Encrypt
+              certificates. See the README.
             </p>
           )}
         </div>
         <ErrorText error={save.error} />
         {unready && (
           <p className="text-sm text-warn" role="status">
-            <code>*.{domain}</code> doesn't point here yet. Saving moves every public service onto it now, and they won't load
-            until it does.
+            <code>*.{domain}</code> doesn't point here yet. Saving moves every public service onto it now, and they won't load until it
+            does.
           </p>
         )}
         <div>
@@ -117,10 +117,175 @@ function DomainSettings({ settings }: { settings: Settings }) {
 }
 
 const CHANNEL_KINDS = {
-  slack: { label: "Slack", hint: "An incoming webhook URL: Slack app settings, Incoming Webhooks.", placeholder: "https://hooks.slack.com/services/…" },
-  discord: { label: "Discord", hint: "Channel settings, Integrations, Webhooks, Copy Webhook URL.", placeholder: "https://discord.com/api/webhooks/…" },
+  slack: {
+    label: "Slack",
+    hint: "An incoming webhook URL: Slack app settings, Incoming Webhooks.",
+    placeholder: "https://hooks.slack.com/services/…",
+  },
+  discord: {
+    label: "Discord",
+    hint: "Channel settings, Integrations, Webhooks, Copy Webhook URL.",
+    placeholder: "https://discord.com/api/webhooks/…",
+  },
   webhook: { label: "Any URL", hint: "Gets a JSON POST with event, text and url.", placeholder: "https://example.com/hooks/justdeploy" },
+  email: {
+    label: "Email",
+    hint: "One or more addresses, separated by commas. Sent through the email server above.",
+    placeholder: "ops@example.com, oncall@example.com",
+  },
 } as const;
+
+const SECURITY = {
+  starttls: { label: "STARTTLS (port 587)", port: 587 },
+  tls: { label: "TLS (port 465)", port: 465 },
+  none: { label: "None, for a relay on a trusted network", port: 25 },
+} as const;
+
+/** The SMTP server email notifications go through. */
+function EmailServer() {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const current = useQuery({ queryKey: ["smtp"], queryFn: () => api.get<SmtpSettings | null>("/settings/smtp") });
+  const blank = {
+    host: "",
+    port: 587,
+    security: "starttls" as SmtpSettings["security"],
+    username: "",
+    password: "",
+    from: "",
+    test_to: "",
+  };
+  const [form, setForm] = useState(blank);
+  const [editing, setEditing] = useState(false);
+  useEffect(() => {
+    const c = current.data;
+    if (c) setForm((f) => ({ ...f, host: c.host, port: c.port, security: c.security, username: c.username, from: c.from }));
+  }, [current.data]);
+  const set =
+    <K extends keyof typeof form>(key: K) =>
+    (value: (typeof form)[K]) =>
+      setForm((f) => ({ ...f, [key]: value }));
+  const save = useMutation({
+    mutationFn: () => api.put("/settings/smtp", { ...form, password: form.password || null }),
+    onSuccess: () => {
+      toast("Saved; the test message was accepted");
+      setEditing(false);
+      setForm((f) => ({ ...f, password: "" }));
+      queryClient.invalidateQueries({ queryKey: ["smtp"] });
+    },
+  });
+  const remove = useMutation({
+    mutationFn: () => api.del("/settings/smtp"),
+    onSuccess: () => {
+      setForm(blank);
+      queryClient.invalidateQueries({ queryKey: ["smtp"] });
+    },
+    onError: (e) => toast(e.message, true),
+  });
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    save.mutate();
+  };
+  const c = current.data;
+  const open = editing || c === null;
+
+  return (
+    <Card>
+      <SectionTitle>Email</SectionTitle>
+      {c && !editing ? (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="max-w-[68ch]">
+            Sending as <strong>{c.from}</strong> through {c.host}:{c.port}
+            {c.username ? `, signed in as ${c.username}` : ""}.
+          </p>
+          <div className="flex gap-1">
+            <Button variant="secondary" onClick={() => setEditing(true)}>
+              Change
+            </Button>
+            <Button variant="tertiary" busy={remove.isPending} onClick={() => remove.mutate()}>
+              Remove
+            </Button>
+          </div>
+        </div>
+      ) : (
+        open && (
+          <form onSubmit={submit} className="grid gap-5">
+            <p className="max-w-[68ch] text-muted">
+              An SMTP server for email notifications: Amazon SES, Postmark, Resend, Mailgun, your own. It's saved once a test message to the
+              address below is accepted.
+            </p>
+            <div className="grid gap-5 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+              <Field label="Server">
+                <Input value={form.host} onChange={(e) => set("host")(e.target.value)} placeholder="smtp.example.com" required />
+              </Field>
+              <Field label="Port">
+                <Input type="number" min={1} max={65535} value={form.port} onChange={(e) => set("port")(Number(e.target.value))} required />
+              </Field>
+            </div>
+            <Field label="Encryption">
+              <Select
+                value={form.security}
+                onChange={(e) => {
+                  const security = e.target.value as SmtpSettings["security"];
+                  setForm((f) => ({ ...f, security, port: SECURITY[security].port }));
+                }}
+              >
+                {Object.entries(SECURITY).map(([id, s]) => (
+                  <option key={id} value={id}>
+                    {s.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <div className="grid gap-5 md:grid-cols-2">
+              <Field label="Username" hint="Leave empty if the server doesn't ask for one.">
+                <Input autoComplete="off" value={form.username} onChange={(e) => set("username")(e.target.value)} />
+              </Field>
+              <Field label="Password" hint={c?.has_password ? "Leave empty to keep the saved one. Stored encrypted." : "Stored encrypted."}>
+                <Input
+                  type="password"
+                  autoComplete="new-password"
+                  value={form.password}
+                  onChange={(e) => set("password")(e.target.value)}
+                />
+              </Field>
+            </div>
+            <div className="grid gap-5 md:grid-cols-2">
+              <Field label="Send as">
+                <Input
+                  value={form.from}
+                  onChange={(e) => set("from")(e.target.value)}
+                  placeholder="justdeploy <alerts@example.com>"
+                  required
+                />
+              </Field>
+              <Field label="Send a test to">
+                <Input
+                  type="email"
+                  value={form.test_to}
+                  onChange={(e) => set("test_to")(e.target.value)}
+                  placeholder="you@example.com"
+                  required
+                />
+              </Field>
+            </div>
+            <ErrorText error={save.error} />
+            <div className="flex gap-2">
+              <Button type="submit" busy={save.isPending}>
+                Send a test and save
+              </Button>
+              {editing && (
+                <Button variant="secondary" onClick={() => setEditing(false)}>
+                  Cancel
+                </Button>
+              )}
+            </div>
+          </form>
+        )
+      )}
+    </Card>
+  );
+}
 
 function Notifications() {
   const toast = useToast();
@@ -168,7 +333,8 @@ function Notifications() {
         </ul>
       ) : (
         <p className="mb-6 max-w-[68ch]">
-          Get a message when a deploy, scheduled run or backup fails, or a service crashes. None set up yet.
+          Get a message when a deploy, scheduled run or backup fails, a service crashes or stops answering, or a domain stops pointing here.
+          None set up yet.
         </p>
       )}
       <form onSubmit={submit} className="grid gap-5 border-t border-line pt-6">
@@ -187,9 +353,9 @@ function Notifications() {
             </Select>
           </Field>
         </div>
-        <Field label="Webhook URL" hint={`${kind.hint} Stored encrypted.`}>
+        <Field label={form.kind === "email" ? "Addresses" : "Webhook URL"} hint={`${kind.hint} Stored encrypted.`}>
           <Input
-            type="url"
+            type={form.kind === "email" ? "text" : "url"}
             autoComplete="off"
             value={form.url}
             onChange={(e) => setForm({ ...form, url: e.target.value })}

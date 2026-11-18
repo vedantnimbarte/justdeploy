@@ -9,7 +9,7 @@
 //! scheduled service stops there: its image is ready, and runs start from it.
 
 use crate::{
-    backups, cluster,
+    backups, cluster, data,
     docker::{self, spec, LABEL_DEPLOYMENT, LABEL_KIND, LABEL_PR, LABEL_PROJECT, LABEL_SERVICE},
     engines,
     error::{Error, Result},
@@ -26,7 +26,7 @@ use uuid::Uuid;
 
 const BUILD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const PRE_DEPLOY_TIMEOUT: Duration = Duration::from_secs(30 * 60);
-const KEEP_IMAGES: i64 = 5;
+pub const KEEP_IMAGES: i64 = 5;
 /// Traefik batches Docker events for about two seconds before it reloads.
 const PROXY_SETTLE: Duration = Duration::from_secs(3);
 
@@ -484,8 +484,15 @@ async fn release(
         }
     }
 
-    // A database restored from another's history is filled before it first starts.
+    // A database restored from another's history is filled before it first
+    // starts, and a read replica gets its primary's data.
     pitr::prepare(state, service, &volumes, |line| log.line(line)).await?;
+    if deployment.pr_number.is_none() {
+        data::prepare_replica(state, service, &volumes, &network, image, |line| {
+            log.line(line)
+        })
+        .await?;
+    }
 
     log.line(format!(
         "==> Starting {name} ({replicas} {})",
@@ -547,6 +554,12 @@ async fn release(
     }
     if hosts.is_empty() {
         log.line("==> Running");
+    }
+    if deployment.pr_number.is_none() {
+        // A copy that fails leaves the database running, empty; the copy says why.
+        if let Err(error) = data::fill_pending(state, service, |line| log.line(line)).await {
+            tracing::warn!(service = %service.id, error = format!("{error:#}"), "copying data failed");
+        }
     }
     Ok(())
 }
@@ -811,6 +824,8 @@ pub async fn remove_service(state: &SharedState, service_id: Uuid) -> Result<()>
             docker::remove(&state.docker, &cid).await?;
         }
     }
+    // Once its copies are gone, the primary can let go of what it kept for it.
+    data::forget_replica(state, &service).await;
     for image in built_images(&state.db, service.id, None).await? {
         docker::remove_image(&state.docker, &image).await;
     }

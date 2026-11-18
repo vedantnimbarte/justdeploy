@@ -34,26 +34,14 @@ function recordFor(host: string, ip: string | undefined, cnameTarget?: string) {
   // ponytail: a two-label apex check reads example.co.uk as a subdomain; a public-suffix list fixes it if that bites.
   const apex = labels.length <= 2;
   const name = apex ? "@" : labels.slice(0, -2).join(".");
-  return cnameTarget && !apex
-    ? { type: "CNAME", name, value: cnameTarget }
-    : { type: "A", name, value: ip ?? "" };
+  return cnameTarget && !apex ? { type: "CNAME", name, value: cnameTarget } : { type: "A", name, value: ip ?? "" };
 }
 
 /**
  * One hostname as a row with its connection state, opening onto the steps
  * that connect it. Opens by itself until the hostname is connected.
  */
-export function DnsPanel({
-  host,
-  cnameTarget,
-  tls,
-  actions,
-}: {
-  host: string;
-  cnameTarget?: string;
-  tls: boolean;
-  actions?: ReactNode;
-}) {
+export function DnsPanel({ host, cnameTarget, tls, actions }: { host: string; cnameTarget?: string; tls: boolean; actions?: ReactNode }) {
   const check = useDnsCheck(host);
   const status = check.data?.status ?? "checking";
   const [open, setOpen] = useState<boolean | null>(null);
@@ -121,7 +109,9 @@ function Steps({
             </p>
           )}
           {!record.value && <p>Use this server's public IPv4 address. justdeploy couldn't work it out from JD_PUBLIC_URL.</p>}
-          <p>On Cloudflare, set the record to DNS only (grey cloud). The proxy hides this server from the check and from certificate issuing.</p>
+          <p>
+            On Cloudflare, set the record to DNS only (grey cloud). The proxy hides this server from the check and from certificate issuing.
+          </p>
         </div>
       </Step>
 
@@ -129,7 +119,12 @@ function Steps({
         <CheckResult host={host} check={check} />
       </Step>
 
-      <Step n={3} state={connected ? "current" : "todo"} title={wildcard ? "Open your services" : tls ? "Visit it over HTTPS" : "Visit it"} last>
+      <Step
+        n={3}
+        state={connected ? "current" : "todo"}
+        title={wildcard ? "Open your services" : tls ? "Visit it over HTTPS" : "Visit it"}
+        last
+      >
         <p className="text-muted">
           {tls
             ? `${wildcard ? "Each service gets" : "It gets"} a Let's Encrypt certificate on its first visit after DNS connects, which takes a few seconds. Port 80 has to be open to the internet for it.`
@@ -162,8 +157,10 @@ export function Step({
   children: ReactNode;
 }) {
   return (
-    <li className="relative grid grid-cols-[28px_1fr] gap-x-4">
-      {!last && <span className={cx("absolute top-8 bottom-1 left-[13.5px] w-px", state === "done" ? "bg-ok/50" : "bg-line-strong")} aria-hidden />}
+    <li className="relative grid grid-cols-[28px_minmax(0,1fr)] gap-x-4">
+      {!last && (
+        <span className={cx("absolute top-8 bottom-1 left-[13.5px] w-px", state === "done" ? "bg-ok/50" : "bg-line-strong")} aria-hidden />
+      )}
       <span
         className={cx(
           "z-[1] flex size-7 items-center justify-center rounded-full text-[13px] font-semibold",
@@ -173,7 +170,16 @@ export function Step({
         )}
       >
         {state === "done" ? (
-          <svg viewBox="0 0 16 16" className="size-3.5" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-label="Done">
+          <svg
+            viewBox="0 0 16 16"
+            className="size-3.5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2.2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-label="Done"
+          >
             <path d="M3.5 8.5l3 3 6-7" />
           </svg>
         ) : (
@@ -224,7 +230,12 @@ function CheckResult({ host, check }: { host: string; check: ReturnType<typeof u
 
   let message: ReactNode = "Looking up DNS…";
   if (check.error) message = check.error.message;
-  else if (data?.status === "connected") message = <>{name} resolves to {ips(data.found)}, which is this server.</>;
+  else if (data?.status === "connected")
+    message = (
+      <>
+        {name} resolves to {ips(data.found)}, which is this server.
+      </>
+    );
   else if (data?.status === "missing")
     message = <>No record for {name} yet. New records usually show up within minutes; some providers take a few hours.</>;
   else if (data?.status === "elsewhere")
@@ -237,8 +248,8 @@ function CheckResult({ host, check }: { host: string; check: ReturnType<typeof u
   else if (data?.status === "unknown")
     message = (
       <>
-        {name} resolves to {ips(data.found)}. justdeploy can't tell whether that's this server: set JD_PUBLIC_URL to the address people reach
-        it on.
+        {name} resolves to {ips(data.found)}. justdeploy can't tell whether that's this server: set JD_PUBLIC_URL to the address people
+        reach it on.
       </>
     );
 

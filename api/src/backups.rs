@@ -646,6 +646,36 @@ pub async fn run_restore(state: &SharedState, backup_id: Uuid) -> Result<()> {
     Ok(())
 }
 
+/// Copies `source`'s data into `target` (same engine, both running): a dump of
+/// the source, gzipped into a scratch file on the control plane, restored into
+/// the target the way a backup is.
+pub async fn copy_between(
+    state: &SharedState,
+    source: &Service,
+    target: &Service,
+) -> anyhow::Result<u64> {
+    let engine = require_database(source)?;
+    let dir = std::env::temp_dir().join(format!("jd-copy-{}", Uuid::new_v4().simple()));
+    std::fs::create_dir_all(&dir)?;
+    let store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new_with_prefix(&dir)?);
+    let path = Path::from("copy.gz");
+    let outcome = async {
+        let size = dump(state, source, engine, store.clone(), &path).await?;
+        if engine.id == "redis" {
+            restore_redis(state, target, store.clone(), &path).await?;
+        } else {
+            let (docker, container) = live_container(state, target).await?;
+            let command =
+                engines::restore_command(engine.id).ok_or_else(|| anyhow!("no restore command"))?;
+            restore_into(&docker, &container, command, store.clone(), &path).await?;
+        }
+        anyhow::Ok(size)
+    }
+    .await;
+    let _ = std::fs::remove_dir_all(&dir);
+    outcome
+}
+
 /// Fills a fresh copy of a database from its newest successful backup. False
 /// when there is no backup to use.
 pub async fn restore_latest(

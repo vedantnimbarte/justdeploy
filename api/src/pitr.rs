@@ -17,12 +17,8 @@ use crate::{
     state::SharedState,
 };
 use anyhow::{anyhow, bail};
-use bollard::{
-    exec::{CreateExecOptions, StartExecResults},
-    models::{ContainerCreateBody, HostConfig},
-};
+use bollard::models::{ContainerCreateBody, HostConfig};
 use chrono::{DateTime, Utc};
-use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, time::Duration};
 use uuid::Uuid;
@@ -99,6 +95,11 @@ pub async fn configure(
             "point-in-time recovery is for PostgreSQL databases",
         ));
     }
+    if service.replica_of.is_some() {
+        return Err(bad_request(
+            "a read replica has its primary's history; turn recovery on for the primary",
+        ));
+    }
     if let Some(id) = destination {
         walg_env(state, service.id, id)
             .await
@@ -117,41 +118,6 @@ pub async fn configure(
 }
 
 /// Runs a shell script in a running container and returns its exit code and output.
-async fn exec(
-    docker: &bollard::Docker,
-    container: &str,
-    user: &str,
-    script: &str,
-) -> anyhow::Result<(i64, String)> {
-    let exec = docker
-        .create_exec(
-            container,
-            CreateExecOptions {
-                attach_stdout: Some(true),
-                attach_stderr: Some(true),
-                user: Some(user),
-                cmd: Some(vec!["sh", "-c", script]),
-                ..Default::default()
-            },
-        )
-        .await?;
-    let StartExecResults::Attached { mut output, .. } = docker.start_exec(&exec.id, None).await?
-    else {
-        bail!("could not attach");
-    };
-    let mut text = Vec::new();
-    let collect = async {
-        while let Some(Ok(chunk)) = output.next().await {
-            text.extend_from_slice(&docker::output_bytes(&chunk));
-        }
-    };
-    tokio::time::timeout(Duration::from_secs(6 * 60 * 60), collect)
-        .await
-        .map_err(|_| anyhow!("still running after six hours"))?;
-    let code = docker.inspect_exec(&exec.id).await?.exit_code.unwrap_or(-1);
-    Ok((code, String::from_utf8_lossy(&text).into_owned()))
-}
-
 const CONNECT: &str =
     r#"export PGHOST=/var/run/postgresql PGUSER="$POSTGRES_USER" PGDATABASE="$POSTGRES_DB""#;
 
@@ -176,7 +142,7 @@ pub async fn base_backups(state: SharedState) -> Result<()> {
             let script = format!(
                 r#"{CONNECT}; wal-g backup-push "$PGDATA" && wal-g delete retain FULL 7 --confirm"#
             );
-            let (code, output) = exec(&docker, &container, "postgres", &script).await?;
+            let (code, output) = docker::exec(&docker, &container, "postgres", &script).await?;
             if code != 0 {
                 bail!("wal-g exited with code {code}: {}", last_lines(&output));
             }
@@ -271,12 +237,12 @@ pub async fn status(state: &SharedState, service: &Service) -> Result<Status> {
             .await?
             .ok_or_else(|| anyhow!("the database is not running"))?;
         let (_, listed) =
-            exec(&docker, &container, "postgres", "wal-g backup-list --detail --json").await?;
+            docker::exec(&docker, &container, "postgres", "wal-g backup-list --detail --json").await?;
         let earliest = parse_backups(&listed).ok().and_then(|b| b.first().map(|b| b.finish_time));
         let script = format!(
             r#"{CONNECT}; psql -tAF'|' -c "SELECT coalesce(last_archived_time::text, ''), failed_count, coalesce(last_failed_time::text, '') FROM pg_stat_archiver""#
         );
-        let (code, row) = exec(&docker, &container, "postgres", &script).await?;
+        let (code, row) = docker::exec(&docker, &container, "postgres", &script).await?;
         if code != 0 {
             bail!("{}", last_lines(&row));
         }

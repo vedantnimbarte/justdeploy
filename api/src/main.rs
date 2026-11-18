@@ -5,10 +5,12 @@ mod backups;
 mod cluster;
 mod config;
 mod crypto;
+mod data;
 mod docker;
 mod engines;
 mod error;
 mod github;
+mod ha;
 mod handlers;
 mod host;
 mod logs;
@@ -34,12 +36,21 @@ use tracing_subscriber::EnvFilter;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
+    // A promoted control plane gets its settings as a file (a Swarm secret);
+    // what its own environment says wins.
+    if let Ok(path) = std::env::var("JD_ENV_FILE") {
+        dotenvy::from_path(path).context("reading JD_ENV_FILE")?;
+    }
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| EnvFilter::new("justdeploy=info,tower_http=info")),
         )
         .init();
+
+    if std::env::args().nth(1).as_deref() == Some("promote") {
+        return ha::promote().await;
+    }
 
     let config = config::Config::from_env()?;
     let db = sqlx::postgres::PgPoolOptions::new()

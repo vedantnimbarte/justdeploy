@@ -70,6 +70,8 @@ pub struct Service {
     /// A database made from another's history at `restore_target`, filled before it first starts.
     pub restore_from: Option<Uuid>,
     pub restore_target: Option<DateTime<Utc>>,
+    /// A Postgres read replica: the database it streams from.
+    pub replica_of: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -123,4 +125,6 @@ pub struct Domain {
     pub service_id: Uuid,
     pub hostname: String,
     pub created_at: DateTime<Utc>,
+    /// Whether it last resolved to the cluster; None until checked.
+    pub dns_ok: Option<bool>,
 }

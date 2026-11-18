@@ -302,10 +302,10 @@ pub async fn login(
         let Some(code) = code else {
             return Err(Error::TwoFactorRequired);
         };
-        if !totp(&state.cipher.decrypt(secret)?, &email)?
+        let current = totp(&state.cipher.decrypt(secret)?, &email)?
             .check_current(code)
-            .unwrap_or(false)
-        {
+            .unwrap_or(false);
+        if !current && !use_recovery_code(&state.db, user.id, code).await? {
             return Err(bad_request("that code is wrong or has expired"));
         }
     }
@@ -406,7 +406,68 @@ pub async fn start_two_factor(state: &SharedState, user: &User) -> Result<TwoFac
     })
 }
 
-pub async fn confirm_two_factor(state: &SharedState, user: &User, code: &str) -> Result<()> {
+/// Ten codes that each sign in once in place of the authenticator, replacing
+/// any from before. Only their hashes are kept; these are shown once.
+pub async fn new_recovery_codes(db: &PgPool, user_id: Uuid) -> Result<Vec<String>> {
+    let codes: Vec<String> = (0..10).map(|_| recovery_code()).collect();
+    let hashes: Vec<String> = codes
+        .iter()
+        .map(|c| hash_token(&normalize_code(c)))
+        .collect();
+    let mut tx = db.begin().await?;
+    sqlx::query!("DELETE FROM recovery_codes WHERE user_id = $1", user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query!(
+        "INSERT INTO recovery_codes (user_id, code_hash) SELECT $1, * FROM UNNEST($2::text[])",
+        user_id,
+        &hashes
+    )
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(codes)
+}
+
+/// `abcde-12345`: ten lowercase letters and digits, easy to read back.
+fn recovery_code() -> String {
+    let raw = random_string(10).to_lowercase();
+    format!("{}-{}", &raw[..5], &raw[5..])
+}
+
+/// Spaces, dashes and case don't matter when typing one.
+fn normalize_code(code: &str) -> String {
+    code.chars()
+        .filter(char::is_ascii_alphanumeric)
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+/// Spends an unused recovery code. Codes are ten characters, so a six-digit
+/// authenticator code is never mistaken for one.
+async fn use_recovery_code(db: &PgPool, user_id: Uuid, code: &str) -> Result<bool> {
+    let code = normalize_code(code);
+    if code.len() != 10 {
+        return Ok(false);
+    }
+    let used = sqlx::query!(
+        "UPDATE recovery_codes SET used_at = now()
+         WHERE user_id = $1 AND code_hash = $2 AND used_at IS NULL",
+        user_id,
+        hash_token(&code)
+    )
+    .execute(db)
+    .await?
+    .rows_affected();
+    Ok(used == 1)
+}
+
+/// Turns two-factor sign-in on and returns its recovery codes.
+pub async fn confirm_two_factor(
+    state: &SharedState,
+    user: &User,
+    code: &str,
+) -> Result<Vec<String>> {
     let pending = sqlx::query_scalar!("SELECT totp_pending_enc FROM users WHERE id = $1", user.id)
         .fetch_one(&state.db)
         .await?
@@ -426,7 +487,7 @@ pub async fn confirm_two_factor(state: &SharedState, user: &User, code: &str) ->
     )
     .execute(&state.db)
     .await?;
-    Ok(())
+    new_recovery_codes(&state.db, user.id).await
 }
 
 pub async fn disable_two_factor(db: &PgPool, user_id: Uuid) -> Result<()> {
@@ -436,6 +497,9 @@ pub async fn disable_two_factor(db: &PgPool, user_id: Uuid) -> Result<()> {
     )
     .execute(db)
     .await?;
+    sqlx::query!("DELETE FROM recovery_codes WHERE user_id = $1", user_id)
+        .execute(db)
+        .await?;
     Ok(())
 }
 
@@ -447,13 +511,23 @@ pub struct Person {
     email: String,
     role: String,
     two_factor: bool,
+    /// Unused recovery codes, when two-factor sign-in is on.
+    recovery_codes_left: i64,
     created_at: DateTime<Utc>,
+}
+
+impl Person {
+    pub fn two_factor(&self) -> bool {
+        self.two_factor
+    }
 }
 
 pub async fn list_users(db: &PgPool) -> Result<Vec<Person>> {
     Ok(sqlx::query_as!(
         Person,
-        r#"SELECT id, email, role, totp_secret_enc IS NOT NULL AS "two_factor!", created_at
+        r#"SELECT id, email, role, totp_secret_enc IS NOT NULL AS "two_factor!", created_at,
+                  (SELECT count(*) FROM recovery_codes r WHERE r.user_id = users.id AND r.used_at IS NULL)
+                    AS "recovery_codes_left!"
            FROM users ORDER BY created_at"#
     )
     .fetch_all(db)
@@ -463,7 +537,9 @@ pub async fn list_users(db: &PgPool) -> Result<Vec<Person>> {
 pub async fn get_user(db: &PgPool, id: Uuid) -> Result<Person> {
     Ok(sqlx::query_as!(
         Person,
-        r#"SELECT id, email, role, totp_secret_enc IS NOT NULL AS "two_factor!", created_at
+        r#"SELECT id, email, role, totp_secret_enc IS NOT NULL AS "two_factor!", created_at,
+                  (SELECT count(*) FROM recovery_codes r WHERE r.user_id = users.id AND r.used_at IS NULL)
+                    AS "recovery_codes_left!"
            FROM users WHERE id = $1"#,
         id
     )
@@ -723,6 +799,17 @@ impl RateLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recovery_codes_read_back_loosely() {
+        let code = recovery_code();
+        assert_eq!(code.len(), 11);
+        assert_eq!(
+            normalize_code(&code.to_uppercase().replace('-', " ")).len(),
+            10
+        );
+        assert_eq!(normalize_code("ABcde-12 345"), "abcde12345");
+    }
 
     #[test]
     fn limiter_refuses_after_the_limit_and_resets_on_success() {

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, email, role, totp_secret_enc IS NOT NULL AS \"two_factor!\", created_at\n           FROM users WHERE id = $1",
+  "query": "SELECT id, email, role, totp_secret_enc IS NOT NULL AS \"two_factor!\", created_at,\n                  (SELECT count(*) FROM recovery_codes r WHERE r.user_id = users.id AND r.used_at IS NULL)\n                    AS \"recovery_codes_left!\"\n           FROM users WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -52,6 +52,12 @@
             "name": "created_at"
           }
         }
+      },
+      {
+        "ordinal": 5,
+        "name": "recovery_codes_left!",
+        "type_info": "Int8",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -64,8 +70,9 @@
       false,
       false,
       null,
-      false
+      false,
+      null
     ]
   },
-  "hash": "82e48fef68ad9e26820b815623ccb4aaa05464c91ec850f201ed40469cde79e2"
+  "hash": "2660bc9bb6573f9ad6ece2412a99a3dc0eeda295291882c989ef067e679f7a06"
 }

@@ -46,6 +46,17 @@
             "name": "created_at"
           }
         }
+      },
+      {
+        "ordinal": 4,
+        "name": "dns_ok",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "domains",
+            "name": "dns_ok"
+          }
+        }
       }
     ],
     "parameters": {
@@ -59,7 +70,8 @@
       false,
       false,
       false,
-      false
+      false,
+      true
     ]
   },
   "hash": "566399b24628fac605f593dfacdf9b54ba66a72b18cd492d59db50e4f324274a"

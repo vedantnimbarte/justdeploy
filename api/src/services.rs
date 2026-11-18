@@ -449,6 +449,12 @@ pub struct NewService {
     /// A database made from another's history: (source, moment). Never from requests.
     #[serde(skip)]
     pub restore: Option<(Uuid, chrono::DateTime<chrono::Utc>)>,
+    /// A Postgres read replica of this database. Never from requests.
+    #[serde(skip)]
+    pub replica_of: Option<Uuid>,
+    /// Filled with this database's data once it first runs. Never from requests.
+    #[serde(skip)]
+    pub copy_from: Option<Uuid>,
 }
 
 /// Empty and blank strings mean "not set".
@@ -550,9 +556,9 @@ pub async fn create_service(
         INSERT INTO services (id, project_id, name, kind, repo_url, branch, root_dir, git_token_enc,
             build_type, dockerfile_path, image, engine, port, public, health_path, cpu_millis,
             memory_mb, webhook_secret, pre_deploy_command, cron_schedule, restore_from,
-            restore_target)
+            restore_target, replica_of)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-            $19, $20, $21, $22)
+            $19, $20, $21, $22, $23)
         RETURNING *
         "#,
         Uuid::new_v4(),
@@ -586,9 +592,20 @@ pub async fn create_service(
         cron_schedule,
         new.restore.map(|(source, _)| source),
         new.restore.map(|(_, at)| at),
+        new.replica_of,
     )
     .fetch_one(&mut *tx)
     .await?;
+    if let Some(source) = new.copy_from {
+        sqlx::query!(
+            "INSERT INTO data_copies (id, source_id, target_id) VALUES ($1, $2, $3)",
+            Uuid::new_v4(),
+            source,
+            service.id
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
 
     for (key, value) in &env {
         sqlx::query!(
@@ -913,6 +930,18 @@ pub async fn update_service(
 }
 
 pub async fn delete_service(state: &SharedState, id: Uuid) -> Result<()> {
+    let replicas = sqlx::query_scalar!(
+        "SELECT name FROM services WHERE replica_of = $1 AND desired_state <> 'deleting'",
+        id
+    )
+    .fetch_all(&state.db)
+    .await?;
+    if !replicas.is_empty() {
+        return Err(bad_request(format!(
+            "delete its read replicas first: {}",
+            replicas.join(", ")
+        )));
+    }
     sqlx::query!(
         "UPDATE services SET desired_state = 'deleting' WHERE id = $1",
         id
@@ -1314,6 +1343,7 @@ async fn connection_url_at(
 /// Databases that get a copy per pull request: deployed and meant to be running.
 pub fn is_copied_for_previews(service: &Service) -> bool {
     service.kind == "database"
+        && service.replica_of.is_none()
         && service.current_deployment_id.is_some()
         && service.desired_state == "running"
 }

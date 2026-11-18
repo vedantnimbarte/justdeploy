@@ -460,6 +460,7 @@ pub(crate) mod tests {
             pitr_base_backup_at: None,
             restore_from: None,
             restore_target: None,
+            replica_of: None,
         }
     }
 

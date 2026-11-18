@@ -5,7 +5,17 @@ import { api, ApiError, ROLE_HINT, ROLE_LABEL, type Invite } from "../api";
 import { Logo } from "../Layout";
 import { Button, ErrorText, Field, Input } from "../ui";
 
-function Screen({ title, lead, children, onSubmit }: { title: string; lead: ReactNode; children: ReactNode; onSubmit: (e: FormEvent) => void }) {
+function Screen({
+  title,
+  lead,
+  children,
+  onSubmit,
+}: {
+  title: string;
+  lead: ReactNode;
+  children: ReactNode;
+  onSubmit: (e: FormEvent) => void;
+}) {
   return (
     <div className="flex min-h-screen flex-col items-center px-5 py-12 sm:justify-center">
       <Logo className="mb-10 h-7" />
@@ -24,6 +34,7 @@ export default function AuthPage({ mode }: { mode: "setup" | "login" }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
+  const [recovery, setRecovery] = useState(false);
   const [needsCode, setNeedsCode] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
@@ -47,12 +58,23 @@ export default function AuthPage({ mode }: { mode: "setup" | "login" }) {
 
   if (needsCode) {
     return (
-      <Screen title="Enter your code" lead="Open your authenticator app and enter the 6-digit code for justdeploy." onSubmit={submit}>
-        <Field label="Code">
+      <Screen
+        title="Enter your code"
+        lead={
+          recovery
+            ? "Enter one of the recovery codes you saved when you turned on two-factor sign-in. Each works once."
+            : "Open your authenticator app and enter the 6-digit code for justdeploy."
+        }
+        onSubmit={submit}
+      >
+        <Field label={recovery ? "Recovery code" : "Code"}>
           <Input
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            pattern="[0-9 ]*"
+            key={recovery ? "recovery" : "code"}
+            inputMode={recovery ? "text" : "numeric"}
+            autoComplete={recovery ? "off" : "one-time-code"}
+            autoCapitalize="off"
+            spellCheck={false}
+            placeholder={recovery ? "abcde-12345" : undefined}
             autoFocus
             required
             className="font-mono text-lg tracking-[0.3em]"
@@ -60,11 +82,18 @@ export default function AuthPage({ mode }: { mode: "setup" | "login" }) {
             onChange={(e) => setCode(e.target.value)}
           />
         </Field>
+        <button type="button" className="text-left text-sm text-muted hover:text-fg" onClick={() => (setRecovery(!recovery), setCode(""))}>
+          {recovery ? "Use the authenticator app instead" : "Lost your phone? Use a recovery code"}
+        </button>
         <ErrorText error={error} />
         <Button type="submit" busy={busy} className="w-full">
           Sign in
         </Button>
-        <button type="button" className="w-full text-sm text-muted hover:text-fg" onClick={() => (setNeedsCode(false), setCode(""), setError(null))}>
+        <button
+          type="button"
+          className="w-full text-sm text-muted hover:text-fg"
+          onClick={() => (setNeedsCode(false), setCode(""), setError(null))}
+        >
           Use a different account
         </button>
       </Screen>
@@ -142,8 +171,7 @@ export function InvitePage() {
       title="Join justdeploy"
       lead={
         <>
-          You're invited as <strong className="text-fg">{ROLE_LABEL[invite.data.role].toLowerCase()}</strong>.{" "}
-          {ROLE_HINT[invite.data.role]}
+          You're invited as <strong className="text-fg">{ROLE_LABEL[invite.data.role].toLowerCase()}</strong>. {ROLE_HINT[invite.data.role]}
         </>
       }
       onSubmit={submit}
@@ -152,7 +180,15 @@ export function InvitePage() {
         <Input type="email" value={invite.data.email} disabled />
       </Field>
       <Field label="Choose a password" hint="At least 10 characters.">
-        <Input type="password" autoComplete="new-password" minLength={10} required autoFocus value={password} onChange={(e) => setPassword(e.target.value)} />
+        <Input
+          type="password"
+          autoComplete="new-password"
+          minLength={10}
+          required
+          autoFocus
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
       </Field>
       <ErrorText error={error} />
       <Button type="submit" busy={busy} className="w-full">

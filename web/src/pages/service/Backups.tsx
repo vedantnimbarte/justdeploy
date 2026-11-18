@@ -96,7 +96,9 @@ export default function Backups({ service }: { service: ServiceDetail }) {
         </Card>
       </div>
       <div className="grid content-start gap-8">
-        {service.engine === "postgres" && destinations.data && <Pitr service={service} destinations={destinations.data} />}
+        {service.engine === "postgres" && !service.replica_of && destinations.data && (
+          <Pitr service={service} destinations={destinations.data} />
+        )}
         <Card>
           <h3 className="mb-4 text-lg font-semibold">Back up now</h3>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
@@ -248,7 +250,8 @@ function Pitr({ service, destinations }: { service: ServiceDetail; destinations:
       <h3 className="mb-1 text-lg font-semibold">Point-in-time recovery</h3>
       <p className="mb-4 text-sm text-muted">
         Every change is archived to S3 within a minute, with a full base backup each night (the last 7 are kept). Restoring picks any moment
-        since the oldest base backup and builds a new database from it; this one stays as it is.
+        since the oldest base backup and builds a new database from it; this one stays as it is. To put that moment back here, use{" "}
+        <em>Replace its data</em> under Copies and replicas.
       </p>
       {!on ? (
         s3.length === 0 ? (

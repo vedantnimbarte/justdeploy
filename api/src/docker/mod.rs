@@ -7,6 +7,7 @@ use bollard::{
     auth::DockerCredentials,
     container::LogOutput,
     errors::Error as DockerError,
+    exec::{CreateExecOptions, StartExecResults},
     models::{
         ContainerCreateBody, ContainerSummary, NetworkCreateRequest, ServiceSpec, ServiceSpecMode,
         ServiceSpecModeReplicated, Task, TaskState, VolumeCreateRequest,
@@ -158,6 +159,25 @@ pub async fn list_all(docker: &Docker, labels: &[(&str, &str)]) -> Result<Vec<Co
         .filters(&filters)
         .build();
     Ok(docker.list_containers(Some(options)).await?)
+}
+
+/// A running copy of the Swarm service `name` on the server `docker` talks to.
+pub async fn local_task(docker: &Docker, name: &str) -> Result<Option<String>> {
+    let filters = HashMap::from([
+        (
+            "label",
+            vec![format!("com.docker.swarm.service.name={name}")],
+        ),
+        ("status", vec!["running".to_string()]),
+    ]);
+    let options = ListContainersOptionsBuilder::new()
+        .filters(&filters)
+        .build();
+    Ok(docker
+        .list_containers(Some(options))
+        .await?
+        .into_iter()
+        .find_map(|c| c.id))
 }
 
 pub fn label<'a>(container: &'a ContainerSummary, key: &str) -> Option<&'a str> {
@@ -481,6 +501,43 @@ impl LineSplitter {
         let rest = std::mem::take(&mut self.pending);
         (!rest.is_empty()).then_some(rest)
     }
+}
+
+/// Runs `script` with `sh -c` in a running container as `user`, and returns its
+/// exit code and output. Gives up after six hours.
+pub async fn exec(
+    docker: &bollard::Docker,
+    container: &str,
+    user: &str,
+    script: &str,
+) -> anyhow::Result<(i64, String)> {
+    let exec = docker
+        .create_exec(
+            container,
+            CreateExecOptions {
+                attach_stdout: Some(true),
+                attach_stderr: Some(true),
+                user: Some(user),
+                cmd: Some(vec!["sh", "-c", script]),
+                ..Default::default()
+            },
+        )
+        .await?;
+    let StartExecResults::Attached { mut output, .. } = docker.start_exec(&exec.id, None).await?
+    else {
+        return Err(anyhow!("could not attach"));
+    };
+    let mut text = Vec::new();
+    let collect = async {
+        while let Some(Ok(chunk)) = output.next().await {
+            text.extend_from_slice(&output_bytes(&chunk));
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(6 * 60 * 60), collect)
+        .await
+        .map_err(|_| anyhow!("still running after six hours"))?;
+    let code = docker.inspect_exec(&exec.id).await?.exit_code.unwrap_or(-1);
+    Ok((code, String::from_utf8_lossy(&text).into_owned()))
 }
 
 #[cfg(test)]

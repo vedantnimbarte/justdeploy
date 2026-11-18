@@ -409,6 +409,17 @@
             "name": "restore_target"
           }
         }
+      },
+      {
+        "ordinal": 37,
+        "name": "replica_of",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "replica_of"
+          }
+        }
       }
     ],
     "parameters": {
@@ -448,6 +459,7 @@
       true,
       true,
       false,
+      true,
       true,
       true,
       true,

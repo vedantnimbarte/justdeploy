@@ -85,6 +85,18 @@ pub fn spawn(state: SharedState) {
         Duration::from_secs(10 * 60),
         pitr::base_backups,
     );
+    every(
+        state.clone(),
+        "domain checks",
+        Duration::from_secs(10 * 60),
+        uptime::check_domains,
+    );
+    every(
+        state.clone(),
+        "registry cleanup",
+        Duration::from_secs(24 * 60 * 60),
+        cluster::clean_registry,
+    );
     every(state, "cleanup", Duration::from_secs(60 * 60), cleanup);
 }
 

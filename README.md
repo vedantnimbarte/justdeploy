@@ -46,6 +46,7 @@ who may do what, not for hosting strangers.
 - [Command line: jd](#command-line-jd)
 - [Notifications](#notifications)
 - [Servers and scaling](#servers-and-scaling)
+- [When the main server goes down](#when-the-main-server-goes-down)
 - [System overview](#system-overview)
 - [Templates](#templates)
 - [Configuration reference](#configuration-reference)
@@ -410,6 +411,28 @@ a crash, in exchange for single-file backups.
 To reach a database from your laptop, set a **Host port** on it (e.g. 15432) and connect to
 `server-ip:15432`, or deploy the **Adminer** template into the same project.
 
+### Copies, read replicas and replacing data
+
+A database's **Copies and replicas** tab has three tools:
+
+- **Copy.** A new database beside this one (`<name>-copy`), with the same engine, image and
+  credentials, filled with its data as it is now. Nothing links them afterwards: try a migration on
+  the copy first. Any engine.
+- **Read replicas** (PostgreSQL). `<name>-replica` follows every change through streaming
+  replication, usually within a second, and refuses writes. It has its own connection URL, for
+  reports and other read-heavy work. Before it first starts, a helper copies the primary with
+  `pg_basebackup`; the primary gets a replication slot and a rule in `pg_hba.conf`, and keeps at most
+  10 GB of changes for a replica that falls behind. The tab shows each replica's lag. Deleting a
+  replica drops its slot; a primary with replicas can't be deleted until they are.
+- **Replace its data** (admins). Fills the database with another one's from the same project, same
+  engine: a dump of the other is restored here, so its tables (or collections) are dropped and
+  recreated, and for Redis the whole dataset is swapped. This is how a
+  [point-in-time](#point-in-time-recovery-postgresql) copy goes back over the original once you've
+  checked it. Each copy's progress and outcome are listed, and written to the activity log.
+
+Copies pass through a scratch file on the control plane, gzipped, so the main server needs room for
+the compressed dump.
+
 ---
 
 ## Backups and restore
@@ -526,8 +549,13 @@ Each person has one role, everywhere:
 **Account.** Each person changes their own password, turns on **two-factor sign-in** (any TOTP app:
 scan the QR code or type the key), and creates **API tokens**. A token is sent as
 `Authorization: Bearer jd_…`, acts with its person's role, is shown once and stored hashed, and shows
-when it was last used. A lost phone: an owner turns two-factor off for that person under Team, or
-`reset-password <email>` does it from the server.
+when it was last used.
+
+Turning two-factor on shows ten **recovery codes** (`abcde-12345`) once: each signs in once in place
+of the authenticator (*Lost your phone? Use a recovery code* on the sign-in screen). They're stored
+hashed; the Account page shows how many are left and makes new ones, which replaces the old, after
+asking for the password. Without codes or phone, an owner turns two-factor off for that person under
+Team, or `reset-password <email>` does it from the server.
 
 **Activity.** Admins see every change made through the dashboard or the API under Team: who did what
 to which service, project or person, plus sign-ins, terminal sessions and what justdeploy itself did
@@ -585,7 +613,7 @@ and how many copies run on it. **Add a server** walks through it:
 4. The page notices when it joins.
 
 Admins can label a server (`region=eu`, `disk=ssd`), **drain** it (its copies move to other servers,
-for maintenance), and remove one that is down. A server still up has to leave first
+for maintenance), **make it a manager** (or a worker again), and remove one that is down. A server still up has to leave first
 (`docker swarm leave` on it). justdeploy's own server can't be drained or removed.
 
 **Copies.** Under a service's **Settings → Copies and servers**, run it as several copies; the
@@ -614,18 +642,73 @@ the main server; images from Docker Hub and other public registries run anywhere
 forwards its Docker API onto `jd-control`, an encrypted overlay network only the control plane and
 the agents join. That is how logs, terminals, metrics and backups work wherever a copy runs.
 
+**Old images.** Once a day, images in the registry that no deployment needs any more (not running,
+not among a service's five newest kept for rollback) are deleted, and the registry's garbage
+collector frees their space. It waits for a moment with no build or deploy running.
+
+---
+
+## When the main server goes down
+
+Copies on other servers keep running when the main server fails. The **Servers** page, under *If
+this server goes down*, sets up the two things that keep them reachable and let justdeploy carry on
+elsewhere.
+
+**1. Traffic through every manager.** Make two more servers managers (three or five managers in all:
+the cluster can only reschedule copies while more than half of them are up). Each manager other
+than the main one then runs its own Traefik, `jd-edge`, on ports 80 and 443 of that server, routing
+the same services. Give your domains an A record per manager, or put a load balancer in front, so
+visitors reach one that's up.
+
+With HTTPS, certificates are still issued by the main server's Traefik only. Every minute justdeploy
+copies them to the edges (a Swarm secret), and the edges pass Let's Encrypt's
+`/.well-known/acme-challenge/` requests to the main Traefik, whichever server they arrive at. Edges
+keep serving the certificates they have while the main server is down; renewals wait for an issuer.
+
+**2. A standby of justdeploy's database.** Pick another manager and *Start the standby*: a copy of
+justdeploy's own Postgres (`jd-pg-<server>`) streams every change from it, with its lag shown on the
+page. It also gets justdeploy's settings, master key included, as a Swarm secret.
+
+**Taking over.** If the main server is lost for good, run the command the page shows on the
+standby's server:
+
+```bash
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/vedantnimbarte/justdeploy:<version> justdeploy promote
+```
+
+It promotes the standby to the primary database, marks that server as where justdeploy runs, and
+starts justdeploy there as a Swarm service (`jd-main`) on port 8080, with the settings it had. The new
+main server gets a Traefik of its own (`jd-ingress`) that issues certificates from then on; the
+dashboard's domain, if you had one, routes to it once its DNS points there; so does the host in
+`JD_PUBLIC_URL`, which webhooks use. Then pick a new standby.
+
+If the old server comes back, its justdeploy refuses to start (the server label `jd.control-plane`
+says it moved), so two never manage the cluster at once. Run `docker compose down` there, then
+drain and remove it under Servers, or keep it as a manager that only routes.
+
+Moving justdeploy is a command you run, not automatic: a network split must not leave two copies
+both believing they're in charge.
+
 ---
 
 ## Notifications
 
-Under **Settings → Notifications**, add a Slack or Discord incoming webhook, or any URL. A channel
-gets a message when a deploy fails (previews included), a scheduled run or command fails, a backup
-fails, or a service crashes (at most one crash message per service an hour). Tick *Also tell me when
+Under **Settings → Notifications**, add a Slack or Discord incoming webhook, any URL, or **email**
+addresses. A channel gets a message when a deploy fails (previews included), a scheduled run or
+command fails, a backup fails, a service crashes (at most one crash message per service an hour) or
+goes down, or a custom domain stops pointing at your servers (checked every ten minutes; it says
+so again when the domain comes back). Tick *Also tell me when
 deploys succeed* for successful deploys too. A test message is sent when you add a channel, and the
 channel is only saved if it arrives. Webhook URLs are stored encrypted. Any URL receives a JSON
 `POST` of `{event, text, url}`, where `event` is `deploy.failed`, `deploy.succeeded`,
-`service.crashed`, `service.down`, `service.recovered`, `run.failed` or `backup.failed`. A public
-service going down (two failed uptime checks in a row) and coming back are always sent.
+`service.crashed`, `service.down`, `service.recovered`, `run.failed`, `backup.failed`,
+`domain.unreachable` or `domain.reachable`. A public service going down (two failed uptime checks in
+a row) and coming back are always sent.
+
+**Email** goes through an SMTP server set under **Settings → Email**: host, port, encryption
+(STARTTLS on 587, TLS on 465, or none for a trusted relay), username and password (stored
+encrypted), and the sender. It's saved once a test message is accepted. The subject is the first
+line of the message, the body has a link to the page in question.
 
 ---
 
@@ -731,6 +814,7 @@ The control plane reads its configuration from the environment (`.env` next to t
 | `JD_BUILDER_IMAGE` | `ghcr.io/vedantnimbarte/justdeploy-builder:latest` | Image used for builds and health checks |
 | `JD_POSTGRES_IMAGE` | `ghcr.io/vedantnimbarte/justdeploy-postgres:17` | PostgreSQL with wal-g, used for databases with point-in-time recovery on |
 | `JD_LOG_DAYS` | `7` | Days service logs are kept for search (1 to 365) |
+| `JD_ENV_FILE` | unset | A file of further settings, read at startup; set by `justdeploy promote` |
 | `JD_TEMPLATES_REPO` | this repository | Repository code templates build from |
 | `JD_TEMPLATES_BRANCH` | `main` | Its branch |
 | `JD_BACKUP_DIR` | `/backups` | Root of "folder on this server" backup destinations |
@@ -759,13 +843,16 @@ authenticate by signature.
 | `GET` | `/auth/me` | `{id, email, role, two_factor}` |
 | `PUT` | `/auth/password` | `{current, new}` |
 | `POST` `DELETE` | `/auth/two-factor` | Start setup: `{secret, otpauth_url, qr_svg}` · turn off `{password}` |
-| `POST` | `/auth/two-factor/confirm` | `{code}` |
+| `POST` | `/auth/two-factor/confirm` | `{code}`; returns the ten recovery codes, once |
+| `POST` | `/auth/two-factor/recovery-codes` | `{password}`: new recovery codes, replacing the old |
 | `GET` `POST` `DELETE` | `/auth/tokens`, `/auth/tokens/{id}` | Your API tokens · create `{name}` returns the value once |
 | `GET` `POST` | `/auth/invites/{token}` | What an invite is for · accept it `{password}` |
 | `GET` | `/users` | Everyone, with role and two-factor state |
 | `GET` | `/servers` | Every server: role, state, resources, labels, copies running, latest usage |
 | `GET` | `/servers/join` | Admin: `{command, manager_address}` to add a server |
-| `PATCH` `DELETE` | `/servers/{id}` | Admin: `{availability?: active \| drain \| pause, labels?}` · remove a server that's down |
+| `PATCH` `DELETE` | `/servers/{id}` | Admin: `{availability?: active \| drain \| pause, role?: manager \| worker, labels?}` · remove a server that's down |
+| `GET` | `/cluster/resilience` | Edge routers per manager, certificates copied, the standby and its lag, the takeover command |
+| `PUT` | `/cluster/standby` | Admin: `{node}` (a manager's id) or `{node: null}` |
 | `PATCH` `DELETE` | `/users/{id}` | Owner: `{role?, reset_two_factor?}` · remove |
 | `GET` `POST` `DELETE` | `/invites`, `/invites/{id}` | Owner: pending invites · create `{email, role}` returns the link once · revoke |
 | `GET` | `/activity?before=id` | Admin: the 100 newest entries before `before` |
@@ -795,13 +882,17 @@ authenticate by signature.
 | `POST` | `/backups/{id}/restore` | |
 | `GET` `PUT` | `/services/{id}/pitr` | Point-in-time recovery state · admin: `{destination_id}` or `null` (redeploys) |
 | `POST` | `/services/{id}/pitr/restore` | `{target}` (a time): creates and returns the restored copy |
+| `POST` | `/services/{id}/copy` | A new database with this one's data; returns it |
+| `GET` `POST` | `/services/{id}/copies` | Copies into this database · admin: replace its data `{from}` |
+| `GET` `POST` | `/services/{id}/replicas` | Read replicas with their lag · add one (PostgreSQL); returns it |
 | `GET` | `/services/{id}/logs/search?q=&hours=24&before=id` | Kept log lines containing `q`, newest 200 |
 | `GET` `POST` `DELETE` | `/backup-destinations`, `/backup-destinations/{id}` | |
 | `GET` | `/deployments/{id}` · `/deployments/{id}/logs` | Build log as server-sent events; resumes from `Last-Event-ID` |
 | `POST` | `/deployments/{id}/rollback` | |
 | `GET` `POST` | `/templates` · `/templates/{id}/deploy` | `{project_name}` or `{project_id}` |
 | `GET` `PUT` | `/settings` | `{base_domain}` |
-| `GET` `POST` `DELETE` | `/notification-channels`, `/notification-channels/{id}` | `{name, kind: slack \| discord \| webhook, url, notify_success}`; sends a test first |
+| `GET` `POST` `DELETE` | `/notification-channels`, `/notification-channels/{id}` | `{name, kind: slack \| discord \| webhook \| email, url, notify_success}` (`url` holds the addresses for email); sends a test first |
+| `GET` `PUT` `DELETE` | `/settings/smtp` | Admin: the email server · `{host, port, security: starttls \| tls \| none, username, password?, from, test_to}`, saved once the test is accepted |
 | `GET` | `/github` | The GitHub App and the accounts it's installed on |
 | `POST` | `/github/manifest` | Admin: `{org?}` returns the form that creates the app on GitHub |
 | `POST` `DELETE` | `/github/app` | Admin: finish creation `{code, state}` · forget the app |
@@ -815,8 +906,8 @@ authenticate by signature.
 - **The Docker socket is root on the host.** justdeploy needs it to run containers, so anyone who can
   sign in to the dashboard (or run code in the control plane) controls the server. Use a strong
   password, keep the dashboard behind HTTPS, and do not expose port 8080 once a dashboard domain is set.
-- **Accounts come from invites.** There is no signup. Login attempts (and one-time codes) are limited to
-  10 per 15 minutes per email address. Sessions, API tokens and invite links are random tokens stored
+- **Accounts come from invites.** There is no signup. Login attempts (one-time and recovery codes
+  included) are limited to 10 per 15 minutes per email address. Sessions, API tokens and invite links are random tokens stored
   hashed; sessions last 30 days and end on sign-out, `reset-password` or removing the person.
   Two-factor secrets and the GitHub App's key are encrypted with `JD_MASTER_KEY`.
 - **Roles limit the dashboard and API, not the server.** A member can open a terminal and run commands
@@ -824,7 +915,9 @@ authenticate by signature.
   with the server.
 - **Secrets are encrypted at rest** (AES-256-GCM): variables, git tokens, database credentials and
   backup credentials. The key is `JD_MASTER_KEY` in `.env`, which the installer creates with
-  owner-only permissions.
+  owner-only permissions. With a standby, justdeploy's settings, the key included, are also a Swarm
+  secret (`jd-env-…`), encrypted in the cluster's store and readable only by services that mount it;
+  anyone who controls a manager's Docker can mount it, as they could read `.env`.
 - **Apps are isolated by network.** Each project has its own Docker network; only public services join
   the proxy network. justdeploy does not sandbox untrusted code: deploy only code you trust.
 - **Webhooks** are verified with HMAC-SHA256 (GitHub, and the GitHub App with its own secret) or a
@@ -935,7 +1028,9 @@ docker compose up -d justdeploy      # dashboard at http://localhost:8080
 | `api/src/uptime.rs` | Uptime checks, incidents, down and recovered notifications, status pages |
 | `api/src/usage.rs` | Hourly usage rollups, volume sizes, the usage series |
 | `api/src/runs.rs` | One-off and scheduled runs of a service's image |
-| `api/src/notify.rs` | Notification channels and delivery to Slack, Discord or a webhook |
+| `api/src/notify.rs` | Notification channels and delivery to Slack, Discord, email or a webhook; the SMTP server |
+| `api/src/data.rs` | Database copies, replacing data, PostgreSQL read replicas |
+| `api/src/ha.rs` | Edge routing on every manager, the standby of justdeploy's database, `justdeploy promote` |
 | `api/src/auth.rs`, `crypto.rs` | People and roles, sessions, API tokens, invites, two-factor, rate limit; AES-GCM secrets |
 | `api/src/cluster.rs` | The Swarm: start-up, overlay networks, node agents, registry, placement, servers, autoscaling |
 | `api/src/github.rs` | The GitHub App: manifest flow, installation tokens, repositories, app webhooks, commit statuses |
@@ -983,13 +1078,16 @@ Dockerfile               Production image (API + dashboard)
 
 ## Known limits
 
-- **One main server.** The control plane, Traefik and the registry run on it, and all traffic enters
-  through it. Other servers add capacity and take over copies when one fails, but if the main server
-  is down, so is routing.
+- **One control plane at a time.** Moving it to the standby is a command you run, not automatic. Until
+  then, apps keep serving through the other managers, but nothing deploys or scales. The registry
+  lives on the main server: after a takeover, images only it had are gone (each server keeps what it
+  pulled), so redeploy apps built from Git. Swarm itself needs more than half its managers up to
+  reschedule anything.
+- **Edges and certificates.** Edge routers serve certificates copied from the main one and log
+  "nonexistent certificate resolver" for each HTTPS route; harmless. A few hundred certificates fill
+  the 500 KB a Swarm secret can hold.
 - **Volumes stay on their server.** Services with a volume run one copy, pinned where their data is.
-- **The registry isn't cleaned**: old image layers stay until removed by hand.
 - **Roles are install-wide**: there is no per-project access yet.
-- **No recovery codes** for two-factor sign-in; an owner or `reset-password` turns it off instead.
 - **Run output** is saved when a run finishes, not streamed while it runs.
 - **Logs, terminals and metrics on other servers** go through the control plane's own container, so
   in development (the API run with `cargo run`) only the main server's are visible.
@@ -1003,9 +1101,14 @@ Dockerfile               Production image (API + dashboard)
   one exercised in development.
 - **Restores** handle backups up to 8 GiB compressed.
 - **Redis** keeps up to a minute of writes at risk (RDB snapshots, no AOF).
-- **Notifications** go to Slack, Discord or a webhook; there is no email.
-- **Point-in-time recovery** is PostgreSQL only and needs an S3-compatible destination. Restores
-  always create a new database; replacing the original in place is left to you.
+- **Domain checks** compare DNS with the managers' addresses; a domain behind a proxy or load
+  balancer (Cloudflare's orange cloud, say) reads as pointing elsewhere.
+- **Point-in-time recovery** is PostgreSQL only and needs an S3-compatible destination. A restore
+  creates a new database; *Replace its data* puts it back over the original as a dump, not in place.
+- **Read replicas** are PostgreSQL only, can't be promoted to a primary from the dashboard, and stay on
+  the server they first ran on, like every database.
+- **Not tested end to end (cluster):** edges serving real Let's Encrypt certificates and passing
+  real challenges (the copying and the challenge route were checked without public DNS).
 - **Disk usage** reads volume sizes from Docker 29 or newer; older Docker shows no disk.
 - **Kept logs** cover production services, not previews or one-off runs, and are stored in
   justdeploy's own Postgres, so a chatty service grows it: lower `JD_LOG_DAYS` if it does.

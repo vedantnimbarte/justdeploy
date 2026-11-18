@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM settings WHERE key = 'standby_node'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "375a72329b92485d40ceb7e8d5a0f586ecf9cb159a5e17dc08ca7e6f2b4cfbe4"
+}
