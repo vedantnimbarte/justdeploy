@@ -12,7 +12,9 @@ mod host;
 mod metrics;
 mod models;
 mod names;
+mod notify;
 mod queue;
+mod runs;
 mod services;
 mod state;
 mod templates;
@@ -64,6 +66,9 @@ async fn main() -> anyhow::Result<()> {
     });
 
     queue::maintenance::remove_stale_helpers(&state).await;
+    runs::fail_interrupted(&state)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     queue::release_locks(&state.db)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;

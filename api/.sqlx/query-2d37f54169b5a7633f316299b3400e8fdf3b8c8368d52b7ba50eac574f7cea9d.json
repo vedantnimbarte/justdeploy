@@ -1,0 +1,81 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.id, s.name, s.desired_state, s.current_deployment_id,\n               s.cron_schedule IS NOT NULL AS \"scheduled!\", p.name AS project\n           FROM services s JOIN projects p ON p.id = s.project_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "desired_state",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "desired_state"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "current_deployment_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "current_deployment_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "scheduled!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "project",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      null,
+      false
+    ]
+  },
+  "hash": "2d37f54169b5a7633f316299b3400e8fdf3b8c8368d52b7ba50eac574f7cea9d"
+}

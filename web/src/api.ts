@@ -37,7 +37,7 @@ export const api = {
   del: <T>(path: string) => request<T>("DELETE", path),
 };
 
-export type Status = "deploying" | "running" | "crashed" | "stopped" | "failed" | "idle" | "deleting";
+export type Status = "deploying" | "running" | "scheduled" | "crashed" | "stopped" | "failed" | "idle" | "deleting";
 
 export interface Deployment {
   id: string;
@@ -76,6 +76,8 @@ export interface Service {
   memory_mb: number | null;
   public_port: number | null;
   preview_enabled: boolean;
+  pre_deploy_command: string | null;
+  cron_schedule: string | null;
   desired_state: "running" | "stopped" | "deleting";
   current_deployment_id: string | null;
   created_at: string;
@@ -135,6 +137,27 @@ export interface Settings {
   public_url: string;
   version: string;
   engines: { id: string; label: string; image: string }[];
+}
+
+export interface Run {
+  id: string;
+  command: string | null;
+  trigger: "schedule" | "manual";
+  status: "running" | "succeeded" | "failed";
+  exit_code: number | null;
+  output: string;
+  error: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface NotificationChannel {
+  id: string;
+  name: string;
+  kind: "slack" | "discord" | "webhook";
+  notify_success: boolean;
+  target: string;
+  created_at: string;
 }
 
 export interface DnsCheck {

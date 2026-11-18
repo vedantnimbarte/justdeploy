@@ -266,6 +266,28 @@
             "name": "updated_at"
           }
         }
+      },
+      {
+        "ordinal": 24,
+        "name": "pre_deploy_command",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "pre_deploy_command"
+          }
+        }
+      },
+      {
+        "ordinal": 25,
+        "name": "cron_schedule",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "cron_schedule"
+          }
+        }
       }
     ],
     "parameters": {
@@ -295,7 +317,9 @@
       false,
       true,
       false,
-      false
+      false,
+      true,
+      true
     ]
   },
   "hash": "eb7f41a4e6a071e97cae046dfbaa16062ade4c82b0fdb317ed588b563d748764"

@@ -254,7 +254,7 @@ pub struct Schedule {
 }
 
 /// The cron crate wants a seconds field; people write five fields.
-fn parse_cron(expr: &str) -> Result<cron::Schedule> {
+pub fn parse_cron(expr: &str) -> Result<cron::Schedule> {
     let fields = expr.split_whitespace().count();
     if fields != 5 {
         return Err(bad_request(
@@ -489,6 +489,18 @@ pub async fn run_backup(state: &SharedState, backup_id: Uuid) -> Result<()> {
             )
             .execute(&state.db)
             .await?;
+            let name = services::get_service(&state.db, row.service_id)
+                .await
+                .map(|s| s.name)
+                .unwrap_or_default();
+            crate::notify::send(
+                state,
+                crate::notify::Event {
+                    kind: "backup.failed",
+                    text: format!("Backing up {name} failed: {error:#}"),
+                    path: format!("/services/{}?tab=backups", row.service_id),
+                },
+            );
         }
     }
     Ok(())

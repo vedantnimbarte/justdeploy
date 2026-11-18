@@ -233,11 +233,56 @@ pub fn helper(
     }
 }
 
+/// A container from a service's own image that runs once and exits: a
+/// pre-deploy command, a scheduled run or a one-off command. It sits on the
+/// project network so it reaches the database, takes no traffic and no
+/// volumes, and is labelled a helper so a crash never leaves it behind.
+pub fn one_off(
+    image: &str,
+    command: Option<&str>,
+    env: &[(String, String)],
+    service: &Service,
+    network: &str,
+) -> ContainerCreateBody {
+    ContainerCreateBody {
+        image: Some(image.to_string()),
+        // `sh -c` replaces the entrypoint so the command means the same thing
+        // whatever the image's entrypoint does. No command: the image's own.
+        entrypoint: command.map(|_| vec!["sh".to_string(), "-c".to_string()]),
+        cmd: command.map(|c| vec![c.to_string()]),
+        env: Some(env.iter().map(|(k, v)| format!("{k}={v}")).collect()),
+        labels: Some(HashMap::from([(MANAGED.to_string(), "helper".to_string())])),
+        host_config: Some(HostConfig {
+            network_mode: Some(network.to_string()),
+            nano_cpus: service.cpu_millis.map(|m| m as i64 * 1_000_000),
+            memory: service.memory_mb.map(|m| m as i64 * 1024 * 1024),
+            log_config: Some(bounded_logs()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::Utc;
     use uuid::Uuid;
+
+    #[test]
+    fn one_off_runs_its_command_through_a_shell_on_the_project_network() {
+        let s = service();
+        let body = one_off("jd-x:1", Some("npm run migrate"), &[("A".into(), "1".into())], &s, "jd-proj-1");
+        assert_eq!(body.entrypoint, Some(vec!["sh".to_string(), "-c".to_string()]));
+        assert_eq!(body.cmd, Some(vec!["npm run migrate".to_string()]));
+        assert_eq!(body.labels.unwrap()[MANAGED], "helper");
+        let host = body.host_config.unwrap();
+        assert_eq!(host.network_mode.as_deref(), Some("jd-proj-1"));
+        assert_eq!(host.memory, Some(256 * 1024 * 1024));
+
+        let default = one_off("jd-x:1", None, &[], &s, "jd-proj-1");
+        assert_eq!((default.entrypoint, default.cmd), (None, None), "no command keeps the image's own");
+    }
 
     fn service() -> Service {
         Service {
@@ -265,6 +310,8 @@ mod tests {
             current_deployment_id: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            pre_deploy_command: None,
+            cron_schedule: None,
         }
     }
 

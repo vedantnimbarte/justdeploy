@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE runs SET status = $2, exit_code = $3, error = $4, output = $5, finished_at = now()\n         WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Int8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b01c2afc3780469c1a1616517fb80e2672f95c01d01c1b6d8d85402c7d6b3e51"
+}

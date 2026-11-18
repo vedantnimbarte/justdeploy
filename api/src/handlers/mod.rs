@@ -48,6 +48,10 @@ pub fn router(state: SharedState) -> Router {
             "/services/{id}/domains/{domain_id}",
             delete(projects::remove_domain),
         )
+        .route(
+            "/services/{id}/runs",
+            get(projects::list_runs).post(projects::start_run),
+        )
         .route("/services/{id}/logs", get(streams::runtime_logs))
         .route("/services/{id}/metrics", get(streams::metrics))
         .route("/services/{id}/terminal", get(streams::terminal))
@@ -80,6 +84,14 @@ pub fn router(state: SharedState) -> Router {
             get(admin::get_settings).put(admin::put_settings),
         )
         .route("/dns-check", get(admin::dns_check))
+        .route(
+            "/notification-channels",
+            get(admin::list_channels).post(admin::create_channel),
+        )
+        .route(
+            "/notification-channels/{id}",
+            delete(admin::delete_channel),
+        )
         // webhooks authenticate by signature, not session
         .route("/webhooks/github/{id}", post(admin::github))
         .route("/webhooks/gitlab/{id}", post(admin::gitlab));

@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE runs SET status = 'failed', error = 'interrupted by a restart of justdeploy', finished_at = now()\n         WHERE status = 'running'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "fa9ca8f1cd2c3c1ab5abd7df4ae027032d04c865cca3b9c1546ed7b9ecbcd219"
+}

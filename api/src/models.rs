@@ -39,6 +39,26 @@ pub struct Service {
     pub current_deployment_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Runs from the new image before release, e.g. migrations.
+    pub pre_deploy_command: Option<String>,
+    /// Five-field cron, UTC. Set: the service runs on this schedule instead of staying up.
+    pub cron_schedule: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Run {
+    pub id: Uuid,
+    pub service_id: Uuid,
+    pub command: Option<String>,
+    /// schedule | manual
+    pub trigger: String,
+    /// running | succeeded | failed
+    pub status: String,
+    pub exit_code: Option<i64>,
+    pub output: String,
+    pub error: Option<String>,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize)]

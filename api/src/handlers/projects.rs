@@ -2,8 +2,8 @@ use crate::{
     auth::Admin,
     docker::{self, LABEL_KIND, LABEL_PROJECT, LABEL_SERVICE},
     error::{bad_request, Result},
-    models::{Deployment, Domain, Project, Service, Volume},
-    names,
+    models::{Deployment, Domain, Project, Run, Service, Volume},
+    names, runs,
     services::{self, NewService, ServiceUpdate},
     state::SharedState,
 };
@@ -21,7 +21,7 @@ use uuid::Uuid;
 pub struct ServiceView {
     #[serde(flatten)]
     service: Service,
-    /// deploying | running | crashed | stopped | failed | idle | deleting
+    /// deploying | running | scheduled | crashed | stopped | failed | idle | deleting
     status: String,
     url: Option<String>,
     connection_url: Option<String>,
@@ -71,6 +71,9 @@ pub(super) fn status(
             "idle"
         }
         .into();
+    }
+    if service.cron_schedule.is_some() {
+        return "scheduled".into();
     }
     let running = containers
         .iter()
@@ -301,6 +304,34 @@ pub async fn service_action(
         _ => return Err(bad_request("action must be deploy, restart, start or stop")),
     }
     Ok(StatusCode::ACCEPTED)
+}
+
+// ---------------------------------------------------------------- runs
+
+pub async fn list_runs(
+    _: Admin,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<runs::Runs>> {
+    let service = services::get_service(&state.db, id).await?;
+    Ok(Json(runs::list(&state, &service).await?))
+}
+
+#[derive(Deserialize)]
+pub struct NewRun {
+    /// Empty runs the image's own command.
+    command: Option<String>,
+}
+
+pub async fn start_run(
+    _: Admin,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<NewRun>,
+) -> Result<(StatusCode, Json<Run>)> {
+    let service = services::get_service(&state.db, id).await?;
+    let run = runs::start(&state, &service, body.command, "manual").await?;
+    Ok((StatusCode::ACCEPTED, Json(run)))
 }
 
 // ---------------------------------------------------------------- deployments

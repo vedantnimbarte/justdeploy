@@ -17,6 +17,7 @@ services:
       JD_PUBLIC_URL: ${JD_PUBLIC_URL:-http://localhost:8080}
       JD_ACME_EMAIL: ${JD_ACME_EMAIL:-}
       JD_BUILDER_IMAGE: ${JD_BUILDER_IMAGE:-ghcr.io/vedantnimbarte/justdeploy-builder:latest}
+      JD_DEPLOY_WORKERS: ${JD_DEPLOY_WORKERS:-2}
     ports:
       - "${JD_PORT:-8080}:8080"
     volumes:

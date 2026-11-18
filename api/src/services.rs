@@ -1,6 +1,7 @@
 //! Projects, services and their configuration: env vars, domains, volumes.
 
 use crate::{
+    backups,
     crypto::random_string,
     engines,
     error::{bad_request, Error, Result},
@@ -121,6 +122,42 @@ pub struct NewService {
     pub env: BTreeMap<String, String>,
     #[serde(default)]
     pub volumes: Vec<String>,
+    pub pre_deploy_command: Option<String>,
+    pub cron_schedule: Option<String>,
+}
+
+/// Empty and blank strings mean "not set".
+fn optional_text(value: Option<String>) -> Option<String> {
+    value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// A schedule makes a service a cron job: nothing stays up, so nothing can be routed to it.
+fn validate_schedule(
+    kind: &str,
+    schedule: Option<&str>,
+    public: bool,
+    public_port: Option<i32>,
+    preview: bool,
+) -> Result<()> {
+    let Some(expr) = schedule else {
+        return Ok(());
+    };
+    if kind == "database" {
+        return Err(bad_request("databases can't run on a schedule"));
+    }
+    if public || public_port.is_some() {
+        return Err(bad_request(
+            "a scheduled service takes no traffic; turn off Public and the host port",
+        ));
+    }
+    if preview {
+        return Err(bad_request(
+            "turn off preview deploys before putting the service on a schedule",
+        ));
+    }
+    backups::parse_cron(expr).map(|_| ())
 }
 
 /// Creates a service and queues its first deployment.
@@ -178,6 +215,8 @@ pub async fn create_service(
     }
     validate_limits(new.cpu_millis, new.memory_mb)?;
     validate_env(&env)?;
+    let cron_schedule = optional_text(new.cron_schedule.clone());
+    validate_schedule(&new.kind, cron_schedule.as_deref(), public, None, false)?;
 
     let mut tx = state.db.begin().await?;
     let service = sqlx::query_as!(
@@ -185,8 +224,9 @@ pub async fn create_service(
         r#"
         INSERT INTO services (id, project_id, name, kind, repo_url, branch, root_dir, git_token_enc,
             build_type, dockerfile_path, image, engine, port, public, health_path, cpu_millis,
-            memory_mb, webhook_secret)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            memory_mb, webhook_secret, pre_deploy_command, cron_schedule)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
+            $19, $20)
         RETURNING *
         "#,
         Uuid::new_v4(),
@@ -216,6 +256,8 @@ pub async fn create_service(
         new.cpu_millis,
         new.memory_mb,
         random_string(32),
+        optional_text(new.pre_deploy_command.clone()),
+        cron_schedule,
     )
     .fetch_one(&mut *tx)
     .await?;
@@ -301,6 +343,10 @@ pub struct ServiceUpdate {
     pub memory_mb: Option<Option<i32>>,
     pub public_port: Option<Option<i32>>,
     pub preview_enabled: Option<bool>,
+    /// Some("") clears it.
+    pub pre_deploy_command: Option<String>,
+    /// Some("") clears it, and the service stays up again.
+    pub cron_schedule: Option<String>,
 }
 
 /// Saves settings, then redeploys: a source change rebuilds, anything else
@@ -360,6 +406,15 @@ pub async fn update_service(
             "only services built from Git can have preview deploys",
         ));
     }
+    let cron_schedule = match update.cron_schedule {
+        Some(v) => optional_text(Some(v)),
+        None => current.cron_schedule.clone(),
+    };
+    validate_schedule(&current.kind, cron_schedule.as_deref(), public, public_port, preview)?;
+    let pre_deploy_command = match update.pre_deploy_command {
+        Some(v) => optional_text(Some(v)),
+        None => current.pre_deploy_command.clone(),
+    };
     let git_token_enc = match update.git_token.as_deref() {
         None => current.git_token_enc.clone(),
         Some("") => None,
@@ -373,7 +428,7 @@ pub async fn update_service(
             repo_url = $2, branch = $3, root_dir = $4, git_token_enc = $5, build_type = $6,
             dockerfile_path = $7, image = $8, port = $9, public = $10, health_path = $11,
             cpu_millis = $12, memory_mb = $13, public_port = $14, preview_enabled = $15,
-            updated_at = now()
+            pre_deploy_command = $16, cron_schedule = $17, updated_at = now()
         WHERE id = $1
         RETURNING *
         "#,
@@ -399,6 +454,8 @@ pub async fn update_service(
         memory,
         public_port,
         preview,
+        pre_deploy_command,
+        cron_schedule,
     )
     .fetch_one(&state.db)
     .await
@@ -474,6 +531,7 @@ pub async fn create_deployment(
         &state.db,
         Job::Deploy {
             deployment_id: deployment.id,
+            service_id: service.id,
         },
     )
     .await?;

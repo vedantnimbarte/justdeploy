@@ -340,7 +340,7 @@ async fn platform(state: &SharedState) -> Result<(Platform, Vec<(Uuid, String, S
         let latest = latest_deployment(state, service.id).await?;
         p.services += 1;
         match status(&service, latest.as_ref(), &mine).as_str() {
-            "running" => p.running += 1,
+            "running" | "scheduled" => p.running += 1,
             "deploying" => p.deploying += 1,
             "crashed" => {
                 p.crashed += 1;

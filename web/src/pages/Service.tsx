@@ -8,13 +8,14 @@ import Deployments from "./service/Deployments";
 import Domains from "./service/Domains";
 import Env from "./service/Env";
 import Logs from "./service/Logs";
+import Runs from "./service/Runs";
 import ServiceSettings from "./service/ServiceSettings";
 
 // Charts and the terminal are the heaviest code; load them when opened.
 const Metrics = lazy(() => import("./service/Metrics"));
 const Terminal = lazy(() => import("./service/Terminal"));
 
-type Tab = "deployments" | "logs" | "env" | "domains" | "metrics" | "terminal" | "backups" | "settings";
+type Tab = "deployments" | "runs" | "logs" | "env" | "domains" | "metrics" | "terminal" | "backups" | "settings";
 
 export default function ServicePage() {
   const { id = "" } = useParams();
@@ -42,6 +43,7 @@ export default function ServicePage() {
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "deployments", label: "Deployments" },
+    ...(s.kind !== "database" ? [{ id: "runs" as Tab, label: "Runs" }] : []),
     { id: "logs", label: "Logs" },
     { id: "env", label: "Variables" },
     ...(s.kind !== "database" ? [{ id: "domains" as Tab, label: "Domains" }] : []),
@@ -101,6 +103,7 @@ export default function ServicePage() {
       <Tabs<Tab> tabs={tabs} active={tab} onChange={(t) => setParams({ tab: t }, { replace: true })} />
       <Band tone="soft">
         {tab === "deployments" && <Deployments service={s} />}
+        {tab === "runs" && <Runs service={s} />}
         {tab === "logs" && <Logs service={s} />}
         {tab === "env" && <Env service={s} />}
         {tab === "domains" && <Domains service={s} />}

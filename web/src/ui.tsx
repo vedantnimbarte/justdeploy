@@ -204,6 +204,7 @@ export function ErrorText({ error }: { error: unknown }) {
 
 const STATUS: Record<string, { dot: string; label: string; pulse?: boolean }> = {
   running: { dot: "bg-ok", label: "Running" },
+  scheduled: { dot: "bg-ok", label: "Scheduled" },
   deploying: { dot: "bg-warn", label: "Deploying", pulse: true },
   building: { dot: "bg-warn", label: "Building", pulse: true },
   queued: { dot: "bg-warn", label: "Queued" },

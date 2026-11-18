@@ -27,6 +27,8 @@ pub struct Config {
     pub web_dir: Option<PathBuf>,
     /// Root for "local directory" backup destinations.
     pub backup_dir: PathBuf,
+    /// Deploys (builds included) that run at once, each for a different service.
+    pub deploy_workers: usize,
 }
 
 impl Config {
@@ -58,6 +60,11 @@ impl Config {
             templates_branch: optional("JD_TEMPLATES_BRANCH", "main"),
             web_dir: std::env::var("JD_WEB_DIR").ok().map(PathBuf::from),
             backup_dir: PathBuf::from(optional("JD_BACKUP_DIR", "/backups")),
+            deploy_workers: optional("JD_DEPLOY_WORKERS", "2")
+                .parse()
+                .ok()
+                .filter(|n| *n > 0)
+                .context("JD_DEPLOY_WORKERS must be a whole number above 0")?,
         })
     }
 

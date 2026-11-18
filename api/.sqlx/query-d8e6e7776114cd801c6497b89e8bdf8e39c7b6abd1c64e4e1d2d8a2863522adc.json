@@ -1,0 +1,86 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, name, kind, url_enc, notify_success, created_at\n         FROM notification_channels ORDER BY name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "notification_channels",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "notification_channels",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "notification_channels",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "url_enc",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "notification_channels",
+            "name": "url_enc"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "notify_success",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "notification_channels",
+            "name": "notify_success"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "notification_channels",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "d8e6e7776114cd801c6497b89e8bdf8e39c7b6abd1c64e4e1d2d8a2863522adc"
+}

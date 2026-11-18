@@ -16,9 +16,10 @@ const STATE: Record<DnsCheck["status"] | "checking", { dot: string; label: strin
   unknown: { dot: "bg-off", label: "Can't verify" },
 };
 
-function useDnsCheck(host: string) {
+export function useDnsCheck(host: string, enabled = true) {
   return useQuery({
     queryKey: ["dns", host],
+    enabled,
     queryFn: () => api.get<DnsCheck>(`/dns-check?host=${encodeURIComponent(host)}`),
     refetchInterval: (q) => (q.state.data?.status === "connected" ? false : RECHECK_MS),
   });

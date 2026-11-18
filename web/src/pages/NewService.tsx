@@ -2,7 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api, type Project, type Service, type Settings } from "../api";
-import { Band, Button, Card, Checkbox, ErrorText, Field, Input, PageHeader, Select, Tabs, Textarea } from "../ui";
+import { Band, Button, Card, Checkbox, ErrorText, Field, Input, PageHeader, Segmented, Select, Tabs, Textarea } from "../ui";
 import { parseDotenv } from "./service/Env";
 
 type Kind = "app" | "image" | "database";
@@ -11,6 +11,8 @@ export default function NewServicePage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const [kind, setKind] = useState<Kind>("app");
+  const [mode, setMode] = useState<"always" | "schedule">("always");
+  const [schedule, setSchedule] = useState("0 3 * * *");
   const project = useQuery({ queryKey: ["project", id], queryFn: () => api.get<Project>(`/projects/${id}`) });
   const settings = useQuery({ queryKey: ["settings"], queryFn: () => api.get<Settings>("/settings") });
 
@@ -33,7 +35,8 @@ export default function NewServicePage() {
 
   const create = useMutation({
     mutationFn: () => {
-      const port = form.port.trim() === "" ? null : Number(form.port);
+      const scheduled = kind !== "database" && mode === "schedule";
+      const port = scheduled || form.port.trim() === "" ? null : Number(form.port);
       return api.post<Service>(`/projects/${id}/services`, {
         name: form.name,
         kind,
@@ -46,7 +49,8 @@ export default function NewServicePage() {
         engine: kind === "database" ? form.engine : undefined,
         port: kind === "database" ? undefined : port,
         public: kind === "database" ? false : form.public && port !== null,
-        health_path: form.health_path || undefined,
+        health_path: scheduled ? undefined : form.health_path || undefined,
+        cron_schedule: scheduled ? schedule : undefined,
         env: Object.fromEntries(parseDotenv(form.env).map((v) => [v.key, v.value])),
         volumes: kind === "image" ? form.volumes.split(/[\s,]+/).filter(Boolean) : [],
       });
@@ -159,20 +163,47 @@ export default function NewServicePage() {
           {kind !== "database" && (
             <Card>
               <div className="grid gap-5">
-                <div className="grid gap-5 md:grid-cols-2">
-                  <Field label="Port" hint="The port the app listens on; PORT is set to it. Empty for a worker.">
-                    <Input inputMode="numeric" value={form.port} onChange={(e) => set("port")(e.target.value)} />
-                  </Field>
-                  <Field label="Health check path" hint="Optional. Without it, an open port counts as healthy.">
-                    <Input value={form.health_path} onChange={(e) => set("health_path")(e.target.value)} placeholder="/health" />
-                  </Field>
+                <div>
+                  <Segmented
+                    label="How it runs"
+                    value={mode}
+                    onChange={setMode}
+                    options={[
+                      { value: "always", label: "Always on" },
+                      { value: "schedule", label: "On a schedule" },
+                    ]}
+                  />
                 </div>
-                <Checkbox
-                  label="Public"
-                  hint={`Serve it at ${form.name || "name"}-${project.data?.name ?? "project"}.${settings.data?.base_domain ?? "…"}`}
-                  checked={form.public}
-                  onChange={set("public")}
-                />
+                {mode === "schedule" ? (
+                  <Field
+                    label="Schedule"
+                    hint={
+                      <>
+                        A cron job: on each time a container runs the image's command and exits. Five fields in UTC;{" "}
+                        <code>0 3 * * *</code> is every day at 03:00.
+                      </>
+                    }
+                  >
+                    <Input className="font-mono text-[14px] md:max-w-xs" required value={schedule} onChange={(e) => setSchedule(e.target.value)} />
+                  </Field>
+                ) : (
+                  <>
+                    <div className="grid gap-5 md:grid-cols-2">
+                      <Field label="Port" hint="The port the app listens on; PORT is set to it. Empty for a worker.">
+                        <Input inputMode="numeric" value={form.port} onChange={(e) => set("port")(e.target.value)} />
+                      </Field>
+                      <Field label="Health check path" hint="Optional. Without it, an open port counts as healthy.">
+                        <Input value={form.health_path} onChange={(e) => set("health_path")(e.target.value)} placeholder="/health" />
+                      </Field>
+                    </div>
+                    <Checkbox
+                      label="Public"
+                      hint={`Serve it at ${form.name || "name"}-${project.data?.name ?? "project"}.${settings.data?.base_domain ?? "…"}`}
+                      checked={form.public}
+                      onChange={set("public")}
+                    />
+                  </>
+                )}
                 <Field label="Environment variables" hint="One KEY=value per line. You can change them later.">
                   <Textarea rows={5} value={form.env} onChange={(e) => set("env")(e.target.value)} placeholder={"NODE_ENV=production\nAPI_KEY=..."} />
                 </Field>

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        INSERT INTO services (id, project_id, name, kind, repo_url, branch, root_dir, git_token_enc,\n            build_type, dockerfile_path, image, engine, port, public, health_path, cpu_millis,\n            memory_mb, webhook_secret)\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)\n        RETURNING *\n        ",
+  "query": "\n        UPDATE services SET\n            repo_url = $2, branch = $3, root_dir = $4, git_token_enc = $5, build_type = $6,\n            dockerfile_path = $7, image = $8, port = $9, public = $10, health_path = $11,\n            cpu_millis = $12, memory_mb = $13, public_port = $14, preview_enabled = $15,\n            pre_deploy_command = $16, cron_schedule = $17, updated_at = now()\n        WHERE id = $1\n        RETURNING *\n        ",
   "describe": {
     "columns": [
       {
@@ -266,15 +266,33 @@
             "name": "updated_at"
           }
         }
+      },
+      {
+        "ordinal": 24,
+        "name": "pre_deploy_command",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "pre_deploy_command"
+          }
+        }
+      },
+      {
+        "ordinal": 25,
+        "name": "cron_schedule",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "cron_schedule"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
         "Uuid",
-        "Uuid",
-        "Text",
-        "Text",
-        "Text",
         "Text",
         "Text",
         "Text",
@@ -287,6 +305,9 @@
         "Text",
         "Int4",
         "Int4",
+        "Int4",
+        "Bool",
+        "Text",
         "Text"
       ]
     },
@@ -314,8 +335,10 @@
       false,
       true,
       false,
-      false
+      false,
+      true,
+      true
     ]
   },
-  "hash": "11dfe55fff39c6230f44869299197f58c67a55d7c92289b6db27a7855d3810b6"
+  "hash": "acbcd1ffeaab2f07617804e88fb31438eee2d928fbf493ed0c5592cd143910e0"
 }

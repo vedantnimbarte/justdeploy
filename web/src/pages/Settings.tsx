@@ -1,16 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
-import { api, timeAgo, type Destination, type Settings } from "../api";
-import { DnsPanel } from "../DnsSetup";
-import { Band, Button, Card, ErrorText, Field, Input, PageHeader, SectionTitle, Select, useToast } from "../ui";
+import { api, timeAgo, type Destination, type NotificationChannel, type Settings } from "../api";
+import { DnsPanel, useDnsCheck } from "../DnsSetup";
+import { Band, Button, Card, Checkbox, ErrorText, Field, Input, PageHeader, SectionTitle, Select, useToast } from "../ui";
 
 export default function SettingsPage() {
   const settings = useQuery({ queryKey: ["settings"], queryFn: () => api.get<Settings>("/settings") });
   return (
     <>
-      <PageHeader title="Settings" lead="Domains, TLS, backups and your account." />
+      <PageHeader title="Settings" lead="Domains, TLS, notifications, backups and your account." />
       <Band className="grid max-w-4xl gap-6">
         {settings.data && <DomainSettings settings={settings.data} />}
+        <Notifications />
         <Destinations />
         <PasswordForm />
         {settings.data && (
@@ -28,6 +29,17 @@ function DomainSettings({ settings }: { settings: Settings }) {
   const queryClient = useQueryClient();
   const [domain, setDomain] = useState(settings.base_domain);
   useEffect(() => setDomain(settings.base_domain), [settings.base_domain]);
+  // Check the domain being typed, once typing pauses, so its DNS can be set up before saving.
+  const [typed, setTyped] = useState(domain);
+  useEffect(() => {
+    const t = setTimeout(() => setTyped(domain), 600);
+    return () => clearTimeout(t);
+  }, [domain]);
+  const candidate = typed === "localhost" || typed.includes(".") ? typed : settings.base_domain;
+  const checkable = candidate !== "localhost";
+  const check = useDnsCheck(`*.${candidate}`, checkable);
+  const changed = domain !== settings.base_domain;
+  const unready = changed && domain !== "localhost" && check.data?.status !== "connected";
   const save = useMutation({
     mutationFn: () => api.put("/settings", { base_domain: domain }),
     onSuccess: () => {
@@ -54,9 +66,9 @@ function DomainSettings({ settings }: { settings: Settings }) {
         >
           <Input value={domain} onChange={(e) => setDomain(e.target.value.toLowerCase())} required />
         </Field>
-        {settings.base_domain !== "localhost" && (
+        {checkable && (
           <div className="overflow-hidden rounded-panel border border-line">
-            <DnsPanel host={`*.${settings.base_domain}`} tls={settings.tls} />
+            <DnsPanel key={candidate} host={`*.${candidate}`} tls={settings.tls} />
           </div>
         )}
         <div className="rounded-control bg-subtle p-4">
@@ -73,9 +85,112 @@ function DomainSettings({ settings }: { settings: Settings }) {
           )}
         </div>
         <ErrorText error={save.error} />
+        {unready && (
+          <p className="text-sm text-warn" role="status">
+            <code>*.{domain}</code> doesn't point here yet. Saving moves every public service onto it now, and they won't load
+            until it does.
+          </p>
+        )}
         <div>
           <Button type="submit" busy={save.isPending}>
-            Save
+            {unready ? "Save anyway" : "Save"}
+          </Button>
+        </div>
+      </form>
+    </Card>
+  );
+}
+
+const CHANNEL_KINDS = {
+  slack: { label: "Slack", hint: "An incoming webhook URL: Slack app settings, Incoming Webhooks.", placeholder: "https://hooks.slack.com/services/…" },
+  discord: { label: "Discord", hint: "Channel settings, Integrations, Webhooks, Copy Webhook URL.", placeholder: "https://discord.com/api/webhooks/…" },
+  webhook: { label: "Any URL", hint: "Gets a JSON POST with event, text and url.", placeholder: "https://example.com/hooks/justdeploy" },
+} as const;
+
+function Notifications() {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const channels = useQuery({ queryKey: ["channels"], queryFn: () => api.get<NotificationChannel[]>("/notification-channels") });
+  const empty = { name: "", kind: "slack" as NotificationChannel["kind"], url: "", notify_success: false };
+  const [form, setForm] = useState(empty);
+  const create = useMutation({
+    mutationFn: () => api.post("/notification-channels", form),
+    onSuccess: () => {
+      toast("Channel added; a test message was sent");
+      setForm(empty);
+      queryClient.invalidateQueries({ queryKey: ["channels"] });
+    },
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.del(`/notification-channels/${id}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["channels"] }),
+    onError: (e) => toast(e.message, true),
+  });
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    create.mutate();
+  };
+  const kind = CHANNEL_KINDS[form.kind];
+
+  return (
+    <Card>
+      <SectionTitle>Notifications</SectionTitle>
+      {channels.data?.length ? (
+        <ul className="mb-6 divide-y divide-line rounded-panel border border-line">
+          {channels.data.map((c) => (
+            <li key={c.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+              <div className="min-w-0">
+                <p className="font-semibold">{c.name}</p>
+                <p className="truncate text-sm text-muted">
+                  {CHANNEL_KINDS[c.kind].label} at {c.target}, {c.notify_success ? "failures and successful deploys" : "failures only"}
+                </p>
+              </div>
+              <Button variant="tertiary" className="h-8" onClick={() => remove.mutate(c.id)}>
+                Remove
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mb-6 max-w-[68ch]">
+          Get a message when a deploy, scheduled run or backup fails, or a service crashes. None set up yet.
+        </p>
+      )}
+      <form onSubmit={submit} className="grid gap-5 border-t border-line pt-6">
+        <h3 className="text-lg font-semibold">Add a channel</h3>
+        <div className="grid gap-5 md:grid-cols-2">
+          <Field label="Name">
+            <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="ops" required />
+          </Field>
+          <Field label="Send to">
+            <Select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value as NotificationChannel["kind"] })}>
+              {Object.entries(CHANNEL_KINDS).map(([id, k]) => (
+                <option key={id} value={id}>
+                  {k.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        </div>
+        <Field label="Webhook URL" hint={`${kind.hint} Stored encrypted.`}>
+          <Input
+            type="url"
+            autoComplete="off"
+            value={form.url}
+            onChange={(e) => setForm({ ...form, url: e.target.value })}
+            placeholder={kind.placeholder}
+            required
+          />
+        </Field>
+        <Checkbox
+          label="Also tell me when deploys succeed"
+          checked={form.notify_success}
+          onChange={(v) => setForm({ ...form, notify_success: v })}
+        />
+        <ErrorText error={create.error} />
+        <div>
+          <Button type="submit" busy={create.isPending}>
+            Send a test and add
           </Button>
         </div>
       </form>

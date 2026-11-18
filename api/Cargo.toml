@@ -36,6 +36,8 @@ object_store = { version = "0.14", features = ["aws"] }
 async-compression = { version = "0.4", features = ["tokio", "gzip"] }
 cron = "0.17"
 bytes = "1"
+# Already in the tree through object_store; used for notification webhooks.
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
 time = "0.3"
 
 [lints.clippy]

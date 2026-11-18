@@ -5,7 +5,7 @@ use crate::{
     backups::{self, DestinationConfig, Schedule},
     engines,
     error::{bad_request, Result},
-    names, services,
+    names, notify, services,
     state::SharedState,
     templates::{self, DeployTemplate, Template},
     webhooks,
@@ -70,6 +70,33 @@ pub async fn put_settings(
             }
         }
     }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------------------------------------------------------------- notifications
+
+pub async fn list_channels(
+    _: Admin,
+    State(state): State<SharedState>,
+) -> Result<Json<Vec<notify::Channel>>> {
+    Ok(Json(notify::list(&state).await?))
+}
+
+pub async fn create_channel(
+    _: Admin,
+    State(state): State<SharedState>,
+    Json(body): Json<notify::NewChannel>,
+) -> Result<(StatusCode, Json<Value>)> {
+    let id = notify::create(&state, body).await?;
+    Ok((StatusCode::CREATED, Json(json!({ "id": id }))))
+}
+
+pub async fn delete_channel(
+    _: Admin,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    notify::delete(&state, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

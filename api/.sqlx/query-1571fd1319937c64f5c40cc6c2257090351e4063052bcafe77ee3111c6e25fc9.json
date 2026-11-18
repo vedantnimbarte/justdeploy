@@ -1,0 +1,62 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT name, kind, url_enc, notify_success FROM notification_channels",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "notification_channels",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "notification_channels",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "url_enc",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "notification_channels",
+            "name": "url_enc"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "notify_success",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "notification_channels",
+            "name": "notify_success"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "1571fd1319937c64f5c40cc6c2257090351e4063052bcafe77ee3111c6e25fc9"
+}

@@ -4,12 +4,15 @@
 //! old one under the same Traefik router, and the old one is removed only once
 //! the new one answers. A service with a volume or a host port can't run twice,
 //! so it is stopped first and started again if the new one fails.
+//!
+//! A pre-deploy command runs from the new image before any of that, and a
+//! scheduled service stops there: its image is ready, and runs start from it.
 
 use crate::{
     docker::{self, spec, LABEL_DEPLOYMENT, LABEL_KIND, LABEL_PR, LABEL_SERVICE},
     error::{Error, Result},
     models::{Deployment, Project, Service},
-    names, services,
+    names, notify, services,
     state::SharedState,
 };
 use anyhow::{anyhow, bail};
@@ -19,6 +22,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 const BUILD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const PRE_DEPLOY_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const KEEP_IMAGES: i64 = 5;
 /// Traefik batches Docker events for about two seconds before it reloads.
 const PROXY_SETTLE: Duration = Duration::from_secs(3);
@@ -103,6 +107,15 @@ pub async fn run(state: &SharedState, deployment_id: Uuid) -> Result<()> {
     }
     log.finish().await;
 
+    let project = services::get_project(&state.db, service.project_id)
+        .await
+        .map(|p| p.name)
+        .unwrap_or_default();
+    let what = match deployment.pr_number {
+        Some(pr) => format!("the preview of {} for PR #{pr} in {project}", service.name),
+        None => format!("{} in {project}", service.name),
+    };
+    let path = format!("/services/{}", service.id);
     if let Err(error) = outcome {
         sqlx::query!(
             "UPDATE deployments SET status = 'failed', error = $2, finished_at = now() WHERE id = $1",
@@ -111,6 +124,29 @@ pub async fn run(state: &SharedState, deployment_id: Uuid) -> Result<()> {
         )
         .execute(&state.db)
         .await?;
+        notify::send(
+            state,
+            notify::Event {
+                kind: "deploy.failed",
+                text: format!("Deploying {what} failed: {error:#}"),
+                path,
+            },
+        );
+    } else {
+        let commit = deployment
+            .commit_message
+            .as_deref()
+            .and_then(|m| m.lines().next())
+            .map(|m| format!(" ({m})"))
+            .unwrap_or_default();
+        notify::send(
+            state,
+            notify::Event {
+                kind: "deploy.succeeded",
+                text: format!("Deployed {what}{commit}."),
+                path,
+            },
+        );
     }
     Ok(())
 }
@@ -313,6 +349,38 @@ async fn release(
         .filter_map(|c| c.id)
         .collect();
 
+    if let Some(command) = &service.pre_deploy_command {
+        if deployment.pr_number.is_some() {
+            log.line("==> Skipping the pre-deploy command: previews share the production database");
+        } else {
+            log.line(format!("==> Running the pre-deploy command: {command}"));
+            let body = spec::one_off(image, Some(command), &env, service, &network);
+            let name = format!("jd-predeploy-{}", &deployment.id.simple().to_string()[..12]);
+            let code = docker::run_to_completion(
+                &state.docker,
+                &name,
+                body,
+                PRE_DEPLOY_TIMEOUT,
+                log.sink(),
+            )
+            .await?;
+            if code != 0 {
+                bail!("the pre-deploy command exited with code {code}, so nothing was released");
+            }
+        }
+    }
+
+    if let Some(schedule) = &service.cron_schedule {
+        // Nothing stays up: runs start from this image on the schedule. A
+        // container left from before the service was scheduled goes.
+        for id in &old {
+            docker::remove(&state.docker, id).await?;
+        }
+        mark_released(state, service, deployment, image).await?;
+        log.line(format!("==> Ready. Runs on the schedule `{schedule}` (UTC)"));
+        return Ok(());
+    }
+
     let exclusive = !volumes.is_empty() || service.public_port.is_some();
     if exclusive && !old.is_empty() {
         log.line("==> Stopping the previous container first (it holds a volume or host port)");
@@ -367,6 +435,25 @@ async fn release(
         docker::remove(&state.docker, id).await?;
     }
 
+    mark_released(state, service, deployment, image).await?;
+
+    let scheme = if state.config.tls() { "https" } else { "http" };
+    for host in &hosts {
+        log.line(format!("==> Live at {scheme}://{host}"));
+    }
+    if hosts.is_empty() {
+        log.line("==> Running");
+    }
+    Ok(())
+}
+
+/// Records `deployment` as the live one and supersedes the one before.
+async fn mark_released(
+    state: &SharedState,
+    service: &Service,
+    deployment: &Deployment,
+    image: &str,
+) -> anyhow::Result<()> {
     sqlx::query!(
         "UPDATE deployments SET status = 'running', finished_at = now() WHERE id = $1",
         deployment.id
@@ -393,14 +480,6 @@ async fn release(
         .execute(&state.db)
         .await?;
         prune_images(state, service.id, image).await?;
-    }
-
-    let scheme = if state.config.tls() { "https" } else { "http" };
-    for host in &hosts {
-        log.line(format!("==> Live at {scheme}://{host}"));
-    }
-    if hosts.is_empty() {
-        log.line("==> Running");
     }
     Ok(())
 }

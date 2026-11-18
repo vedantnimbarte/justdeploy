@@ -38,7 +38,9 @@ own server, not for hosting strangers.
 - [Domains and HTTPS](#domains-and-https)
 - [Databases](#databases)
 - [Backups and restore](#backups-and-restore)
+- [Runs and cron jobs](#runs-and-cron-jobs)
 - [Logs, metrics and the terminal](#logs-metrics-and-the-terminal)
+- [Notifications](#notifications)
 - [System overview](#system-overview)
 - [Templates](#templates)
 - [Configuration reference](#configuration-reference)
@@ -195,9 +197,13 @@ Per service you can set:
 - **Volumes**, for image services that keep data (`/app/data`, for example). Databases always have one.
 - **Host port**, to publish the service's port on the server itself, typically to reach a database
   from outside.
+- **How it runs.** *Always on* (the default), or *On a schedule*: a cron job that starts on each
+  scheduled time and exits. See [Runs and cron jobs](#runs-and-cron-jobs).
+- **Pre-deploy command**, run before each release, typically database migrations. See below.
 
-Status on the dashboard is one of *Running*, *Deploying*, *Crashed* (the container exists but is not
-running), *Failed* (nothing has deployed successfully), *Stopped* or *Not deployed*.
+Status on the dashboard is one of *Running*, *Scheduled* (a cron job with a deployed image),
+*Deploying*, *Crashed* (the container exists but is not running), *Failed* (nothing has deployed
+successfully), *Stopped* or *Not deployed*.
 
 ---
 
@@ -256,7 +262,13 @@ that deploy.
 releases its image again without rebuilding. The five most recent built images per service are kept;
 rolling back further rebuilds that exact commit.
 
-Deploys run one at a time, in order.
+**Pre-deploy command.** When set (for example `npm run db:migrate`), it runs once in a container from
+the new image, with the service's variables and on its project network, before anything is released.
+Its output is in the deployment log. If it exits non-zero the deployment fails and the current version
+keeps running. It is skipped for previews, which share the production database.
+
+**Several deploys at once.** Up to `JD_DEPLOY_WORKERS` deploys (default 2) run at the same time, each
+for a different service. Deploys of the same service always run one at a time, in order.
 
 ---
 
@@ -355,6 +367,22 @@ both an S3-compatible store and a local folder.
 
 ---
 
+## Runs and cron jobs
+
+The **Runs** tab of an app or image service starts a container from the image that is live now, with
+the service's variables, on its project network, runs one command and exits: a seed script, a data
+fix, a report. Each run keeps its status, exit code, duration and the last 2,000 lines of output, shown
+once it finishes. Runs are stopped after 12 hours.
+
+**Cron jobs.** Set *How it runs* to *On a schedule* with a five-field cron expression in UTC
+(`0 3 * * *` is every day at 03:00). Nothing then stays up: a deploy builds or pulls the image (and
+runs the pre-deploy command), and on each scheduled time the image's own command runs. A run is
+skipped while the previous one is still going, and stopping the service pauses the schedule. **Run
+now** starts one straight away. A scheduled service takes no traffic, so it can't be public, publish a
+host port or have previews.
+
+---
+
 ## Logs, metrics and the terminal
 
 - **Logs** follows the live container's output (the last 500 lines, then live).
@@ -362,6 +390,18 @@ both an S3-compatible store and a local folder.
   Samples are taken every 30 seconds and kept for 24 hours.
 - **Terminal** opens a shell (`bash` if present, otherwise `sh`) inside the running container. Each
   session is written to the audit log.
+
+---
+
+## Notifications
+
+Under **Settings → Notifications**, add a Slack or Discord incoming webhook, or any URL. A channel
+gets a message when a deploy fails (previews included), a scheduled run or command fails, a backup
+fails, or a service crashes (at most one crash message per service an hour). Tick *Also tell me when
+deploys succeed* for successful deploys too. A test message is sent when you add a channel, and the
+channel is only saved if it arrives. Webhook URLs are stored encrypted. Any URL receives a JSON
+`POST` of `{event, text, url}`, where `event` is `deploy.failed`, `deploy.succeeded`,
+`service.crashed`, `run.failed` or `backup.failed`.
 
 ---
 
@@ -469,6 +509,7 @@ The control plane reads its configuration from the environment (`.env` next to t
 | `JD_TEMPLATES_REPO` | this repository | Repository code templates build from |
 | `JD_TEMPLATES_BRANCH` | `main` | Its branch |
 | `JD_BACKUP_DIR` | `/backups` | Root of "folder on this server" backup destinations |
+| `JD_DEPLOY_WORKERS` | `2` | Deploys (builds included) that run at once, each for a different service |
 | `JD_BIND` | `0.0.0.0:8080` | Address the API listens on inside its container |
 | `JD_WEB_DIR` | `/app/web` in the image | Built dashboard to serve; unset in development |
 | `JD_COOKIE_SECURE` | `false` | Force `Secure` cookies (automatic when `JD_ACME_EMAIL` is set) |
@@ -497,6 +538,7 @@ authenticate by signature instead.
 | `GET` `PUT` | `/services/{id}/env` | `[{key, value}]`, replaced as a whole |
 | `POST` `DELETE` | `/services/{id}/domains`, `/services/{id}/domains/{domain_id}` | Custom domains |
 | `GET` | `/dns-check?host=app.example.com` | Whether a hostname (or `*.wildcard`) resolves to this server |
+| `GET` `POST` | `/services/{id}/runs` | `{next_run_at, runs}` · start a run `{command?}` (none: the image's own) |
 | `GET` | `/services/{id}/logs` | Runtime output (server-sent events) |
 | `GET` | `/services/{id}/metrics?minutes=60` | Samples |
 | `GET` | `/services/{id}/terminal` | WebSocket: binary frames are terminal bytes, a text frame `{cols, rows}` resizes |
@@ -508,6 +550,7 @@ authenticate by signature instead.
 | `POST` | `/deployments/{id}/rollback` | |
 | `GET` `POST` | `/templates` · `/templates/{id}/deploy` | `{project_name}` or `{project_id}` |
 | `GET` `PUT` | `/settings` | `{base_domain}` |
+| `GET` `POST` `DELETE` | `/notification-channels`, `/notification-channels/{id}` | `{name, kind: slack \| discord \| webhook, url, notify_success}`; sends a test first |
 | `POST` | `/webhooks/github/{service_id}` · `/webhooks/gitlab/{service_id}` | |
 
 ---
@@ -616,6 +659,8 @@ docker compose up -d justdeploy      # dashboard at http://localhost:8080
 | `api/src/backups.rs` | Destinations, schedules, backup and restore |
 | `api/src/templates.rs` | Template catalog and placeholder wiring |
 | `api/src/webhooks.rs` | Signature checks, push deploys, previews |
+| `api/src/runs.rs` | One-off and scheduled runs of a service's image |
+| `api/src/notify.rs` | Notification channels and delivery to Slack, Discord or a webhook |
 | `api/src/auth.rs`, `crypto.rs` | Admin account, sessions, rate limit; AES-GCM secrets |
 | `api/migrations/` | Schema |
 | `builder/` | The builder image: `build.sh` (clone, Dockerfile or Railpack) and `healthcheck.sh` |
@@ -659,7 +704,7 @@ Dockerfile               Production image (API + dashboard)
 
 - **One server.** justdeploy manages the Docker host it runs on. Remote hosts are not supported yet.
 - **One admin.** No additional users or roles.
-- **Deploys run one at a time**, across all services.
+- **Run output** is saved when a run finishes, not streamed while it runs.
 - **Previews share the production database** (they reuse the service's variables), and are GitHub only;
   GitLab merge requests do not get previews.
 - **Not tested end to end:** real Let's Encrypt issuance (it needs public DNS and port 80; the
@@ -670,7 +715,7 @@ Dockerfile               Production image (API + dashboard)
   one exercised in development.
 - **Restores** handle backups up to 8 GiB compressed.
 - **Redis** keeps up to a minute of writes at risk (RDB snapshots, no AOF).
-- **Cron jobs** are not a service kind yet; use a worker with its own scheduler.
+- **Notifications** go to Slack, Discord or a webhook; there is no email.
 
 ---
 

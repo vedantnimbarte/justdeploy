@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 import { api, type ServiceDetail } from "../../api";
-import { Button, Card, Checkbox, CodeLine, ConfirmDelete, ErrorText, Field, Input, SectionTitle, Select, useToast } from "../../ui";
+import { Button, Card, Checkbox, CodeLine, ConfirmDelete, ErrorText, Field, Input, SectionTitle, Segmented, Select, useToast } from "../../ui";
 
 const num = (v: string) => (v.trim() === "" ? null : Number(v));
 const str = (v: number | null) => (v == null ? "" : String(v));
@@ -27,7 +27,11 @@ export default function ServiceSettings({ service: s }: { service: ServiceDetail
     memory_mb: str(s.memory_mb),
     public_port: str(s.public_port),
     preview_enabled: s.preview_enabled,
+    mode: (s.cron_schedule ? "schedule" : "always") as "always" | "schedule",
+    cron_schedule: s.cron_schedule ?? "0 3 * * *",
+    pre_deploy_command: s.pre_deploy_command ?? "",
   });
+  const scheduled = s.kind !== "database" && form.mode === "schedule";
   const set = <K extends keyof typeof form>(key: K) => (value: (typeof form)[K]) => setForm((f) => ({ ...f, [key]: value }));
 
   const save = useMutation({
@@ -42,10 +46,16 @@ export default function ServiceSettings({ service: s }: { service: ServiceDetail
           ...(form.git_token && { git_token: form.git_token }),
         }),
         ...(s.kind !== "app" && { image: form.image }),
-        ...(s.kind !== "database" && { port: num(form.port), public: form.public, health_path: form.health_path }),
+        ...(s.kind !== "database" && {
+          port: num(form.port),
+          public: form.public && !scheduled,
+          health_path: form.health_path,
+          cron_schedule: scheduled ? form.cron_schedule : "",
+          pre_deploy_command: form.pre_deploy_command,
+        }),
         cpu_millis: num(form.cpu_millis),
         memory_mb: num(form.memory_mb),
-        public_port: num(form.public_port),
+        public_port: scheduled ? null : num(form.public_port),
         preview_enabled: form.preview_enabled,
       }),
     onSuccess: () => {
@@ -128,6 +138,37 @@ export default function ServiceSettings({ service: s }: { service: ServiceDetail
           <SectionTitle>Runtime</SectionTitle>
           <div className="grid gap-5">
             {s.kind !== "database" && (
+              <div className="grid justify-items-start gap-3">
+                <Segmented
+                  label="How it runs"
+                  value={form.mode}
+                  onChange={set("mode")}
+                  options={[
+                    { value: "always", label: "Always on" },
+                    { value: "schedule", label: "On a schedule" },
+                  ]}
+                />
+                <p className="text-[13px] text-muted">
+                  {scheduled
+                    ? "Nothing stays up. On each scheduled time a container starts from the live image, runs its command and exits. Each run shows on the Runs tab."
+                    : "A container stays up and is restarted if it stops."}
+                </p>
+              </div>
+            )}
+            {scheduled && (
+              <Field
+                label="Schedule"
+                hint={
+                  <>
+                    Five fields in UTC: minute, hour, day of month, month, day of week. <code>0 3 * * *</code> is every day at 03:00,{" "}
+                    <code>*/15 * * * *</code> every 15 minutes.
+                  </>
+                }
+              >
+                <Input className="font-mono text-[14px] md:max-w-xs" value={form.cron_schedule} onChange={(e) => set("cron_schedule")(e.target.value)} required />
+              </Field>
+            )}
+            {s.kind !== "database" && !scheduled && (
               <>
                 <div className="grid gap-5 md:grid-cols-2">
                   <Field label="Port" hint="Empty for a worker with no port.">
@@ -147,9 +188,11 @@ export default function ServiceSettings({ service: s }: { service: ServiceDetail
               <Field label="Memory limit (MB)" hint="Empty: no limit.">
                 <Input inputMode="numeric" value={form.memory_mb} onChange={(e) => set("memory_mb")(e.target.value)} />
               </Field>
-              <Field label="Host port" hint={s.kind === "database" ? "Expose the database on this server's port." : "Also publish the port on the host."}>
-                <Input inputMode="numeric" value={form.public_port} onChange={(e) => set("public_port")(e.target.value)} placeholder="none" />
-              </Field>
+              {!scheduled && (
+                <Field label="Host port" hint={s.kind === "database" ? "Expose the database on this server's port." : "Also publish the port on the host."}>
+                  <Input inputMode="numeric" value={form.public_port} onChange={(e) => set("public_port")(e.target.value)} placeholder="none" />
+                </Field>
+              )}
             </div>
             {s.volumes.length > 0 && (
               <div>
@@ -168,6 +211,23 @@ export default function ServiceSettings({ service: s }: { service: ServiceDetail
             )}
           </div>
         </Card>
+
+        {s.kind !== "database" && (
+          <Card>
+            <SectionTitle>Before each release</SectionTitle>
+            <Field
+              label="Pre-deploy command"
+              hint="Runs once from the new image, with this service's variables, before it goes live: database migrations, for example. If it fails, the deploy stops and the current version keeps running. Skipped for previews, which share the production database."
+            >
+              <Input
+                className="font-mono text-[14px]"
+                value={form.pre_deploy_command}
+                onChange={(e) => set("pre_deploy_command")(e.target.value)}
+                placeholder="npm run db:migrate"
+              />
+            </Field>
+          </Card>
+        )}
 
         <div className="flex gap-3">
           <Button type="submit" busy={save.isPending}>

@@ -1,11 +1,11 @@
 //! Periodic work: reconcile containers with the database, sample metrics, start
-//! scheduled backups, and clean up old data.
+//! scheduled backups and runs, and clean up old data.
 
 use crate::{
     backups,
     docker::{self, LABEL_KIND, LABEL_SERVICE},
     error::Result,
-    host, metrics, services,
+    host, metrics, notify, runs, services,
     state::SharedState,
 };
 use std::{collections::HashSet, future::Future, time::Duration};
@@ -42,6 +42,12 @@ pub fn spawn(state: SharedState) {
         Duration::from_secs(60),
         backups::schedule_due,
     );
+    every(
+        state.clone(),
+        "scheduled runs",
+        Duration::from_secs(60),
+        runs::schedule_due,
+    );
     every(state, "cleanup", Duration::from_secs(60 * 60), cleanup);
 }
 
@@ -67,9 +73,13 @@ where
 /// gone (removed by hand, or lost with a pruned host).
 async fn reconcile(state: SharedState) -> Result<()> {
     let containers = docker::list(&state.docker, &[]).await?;
-    let services = sqlx::query!("SELECT id, desired_state, current_deployment_id FROM services")
-        .fetch_all(&state.db)
-        .await?;
+    let services = sqlx::query!(
+        r#"SELECT s.id, s.name, s.desired_state, s.current_deployment_id,
+               s.cron_schedule IS NOT NULL AS "scheduled!", p.name AS project
+           FROM services s JOIN projects p ON p.id = s.project_id"#
+    )
+    .fetch_all(&state.db)
+    .await?;
     let known: HashSet<Uuid> = services.iter().map(|s| s.id).collect();
     let busy: HashSet<Uuid> = sqlx::query_scalar!(
         "SELECT DISTINCT service_id FROM deployments WHERE status IN ('queued', 'building', 'deploying')"
@@ -90,7 +100,8 @@ async fn reconcile(state: SharedState) -> Result<()> {
     }
 
     for row in services {
-        if busy.contains(&row.id) || row.current_deployment_id.is_none() {
+        // A scheduled service has nothing that stays up.
+        if busy.contains(&row.id) || row.current_deployment_id.is_none() || row.scheduled {
             continue;
         }
         let id = row.id.to_string();
@@ -106,7 +117,21 @@ async fn reconcile(state: SharedState) -> Result<()> {
                 services::rerelease(&state, &service, "reconcile").await?;
             }
             "running" => {
-                for container in production.iter().filter(|c| !docker::is_running(c)) {
+                let down: Vec<_> = production.iter().filter(|c| !docker::is_running(c)).collect();
+                if !down.is_empty() && notify::first_in_an_hour(row.id) {
+                    notify::send(
+                        &state,
+                        notify::Event {
+                            kind: "service.crashed",
+                            text: format!(
+                                "{} in {} crashed and is being restarted.",
+                                row.name, row.project
+                            ),
+                            path: format!("/services/{}?tab=logs", row.id),
+                        },
+                    );
+                }
+                for container in down {
                     if let Some(cid) = &container.id {
                         let _ = docker::start(&state.docker, cid).await;
                     }
