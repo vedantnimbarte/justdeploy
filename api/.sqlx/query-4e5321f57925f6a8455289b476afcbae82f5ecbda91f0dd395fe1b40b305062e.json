@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT mount_path FROM volumes WHERE service_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "mount_path",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "volumes",
+            "name": "mount_path"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "4e5321f57925f6a8455289b476afcbae82f5ecbda91f0dd395fe1b40b305062e"
+}

@@ -7,6 +7,10 @@ pub struct Project {
     pub id: Uuid,
     pub name: String,
     pub created_at: DateTime<Utc>,
+    /// production for a base project; staging and the like for its copies.
+    pub environment: String,
+    /// The production project this environment was made from.
+    pub base_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize)]

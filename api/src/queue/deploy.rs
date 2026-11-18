@@ -9,7 +9,8 @@
 //! scheduled service stops there: its image is ready, and runs start from it.
 
 use crate::{
-    docker::{self, spec, LABEL_DEPLOYMENT, LABEL_KIND, LABEL_PR, LABEL_SERVICE},
+    backups,
+    docker::{self, spec, LABEL_DEPLOYMENT, LABEL_KIND, LABEL_PR, LABEL_PROJECT, LABEL_SERVICE},
     error::{Error, Result},
     github,
     models::{Deployment, Project, Service},
@@ -287,7 +288,7 @@ async fn build(
         log.line("==> Cloning through the GitHub App");
         env.push(format!("JD_GIT_TOKEN={token}"));
     }
-    let vars = services::runtime_env(state, service)
+    let vars = services::runtime_env(state, service, deployment.pr_number)
         .await
         .map_err(|e| anyhow!("{e}"))?;
     env.push(format!(
@@ -329,7 +330,12 @@ async fn release(
     for volume in &volumes {
         docker::ensure_volume(&state.docker, &volume.name).await?;
     }
-    let env = services::runtime_env(state, service).await.map_err(err)?;
+    if let Some(pr) = deployment.pr_number {
+        preview_databases(state, project, &network, pr, log).await?;
+    }
+    let env = services::runtime_env(state, service, deployment.pr_number)
+        .await
+        .map_err(err)?;
     let hosts = services::hosts(state, service, project, deployment.pr_number)
         .await
         .map_err(err)?;
@@ -367,8 +373,17 @@ async fn release(
         .collect();
 
     if let Some(command) = &service.pre_deploy_command {
-        if deployment.pr_number.is_some() {
-            log.line("==> Skipping the pre-deploy command: previews share the production database");
+        // A preview runs it only against its own database copies; with a
+        // fixed database address it would change production's.
+        let isolated = deployment.pr_number.is_none()
+            || services::references_database(state, service)
+                .await
+                .map_err(err)?;
+        if !isolated {
+            log.line(
+                "==> Skipping the pre-deploy command: this preview reaches its database by a fixed \
+                 address, which is production's. Use a reference like ${{db.URL}} to give previews their own copy",
+            );
         } else {
             log.line(format!("==> Running the pre-deploy command: {command}"));
             let body = spec::one_off(image, Some(command), &env, service, &network);
@@ -525,14 +540,32 @@ async fn wait_healthy(
         );
     };
 
-    ensure_builder(state, log).await?;
     let path = service.health_path.clone().unwrap_or_default();
     log.line(match path.as_str() {
         "" => format!("==> Waiting for port {port}"),
         p => format!("==> Waiting for GET {p} on port {port}"),
     });
+    let check = format!("jd-check-{}", &deployment.id.simple().to_string()[..12]);
+    if !probe(state, network, container, port, &path, &check, log).await? {
+        bail!("the service did not become healthy; is it listening on 0.0.0.0:{port}?");
+    }
+    Ok(())
+}
+
+/// Whether `host:port` on `network` accepts connections (and answers 2xx/3xx
+/// on `path`, when given) within two minutes.
+async fn probe(
+    state: &SharedState,
+    network: &str,
+    host: &str,
+    port: i32,
+    path: &str,
+    helper_name: &str,
+    log: &DeployLog,
+) -> anyhow::Result<bool> {
+    ensure_builder(state, log).await?;
     let env = vec![
-        format!("JD_HOST={container}"),
+        format!("JD_HOST={host}"),
         format!("JD_PORT={port}"),
         format!("JD_PATH={path}"),
         "JD_TIMEOUT=120".to_string(),
@@ -544,17 +577,86 @@ async fn wait_healthy(
         Some(network),
         false,
     );
-    let name = format!("jd-check-{}", &deployment.id.simple().to_string()[..12]);
     let code = docker::run_to_completion(
         &state.docker,
-        &name,
+        helper_name,
         body,
         Duration::from_secs(180),
         log.sink(),
     )
     .await?;
-    if code != 0 {
-        bail!("the service did not become healthy; is it listening on 0.0.0.0:{port}?");
+    Ok(code == 0)
+}
+
+/// Gives a pull request its own copy of each database in the project, the
+/// first time it deploys: same image and credentials, fresh volumes, filled
+/// from the database's newest backup. Previews reach them through references.
+async fn preview_databases(
+    state: &SharedState,
+    project: &Project,
+    network: &str,
+    pr: i32,
+    log: &DeployLog,
+) -> anyhow::Result<()> {
+    let err = |e: Error| anyhow!("{e}");
+    let databases = services::list_services(&state.db, project.id)
+        .await
+        .map_err(err)?
+        .into_iter()
+        .filter(services::is_copied_for_previews);
+    for db in databases {
+        let alias = names::preview_database(&db.name, pr);
+        let (id, pr_label) = (db.id.to_string(), pr.to_string());
+        let labels = [(LABEL_SERVICE, id.as_str()), (LABEL_PR, pr_label.as_str())];
+        if let Some(existing) = docker::list(&state.docker, &labels).await?.first() {
+            if !docker::is_running(existing) {
+                if let Some(cid) = &existing.id {
+                    docker::start(&state.docker, cid).await?;
+                }
+            }
+            continue;
+        }
+        let image = db
+            .image
+            .clone()
+            .ok_or_else(|| anyhow!("{} has no image", db.name))?;
+        log.line(format!(
+            "==> Creating {alias}, this pull request's own copy of {}",
+            db.name
+        ));
+        let mut mounts = Vec::new();
+        for volume in services::volumes(&state.db, db.id).await.map_err(err)? {
+            let name = format!("{}-pr{pr}", volume.name);
+            docker::ensure_volume(&state.docker, &name).await?;
+            mounts.push((name, volume.mount_path));
+        }
+        let env = services::runtime_env(state, &db, None).await.map_err(err)?;
+        let name = format!("jd-{}-{alias}", project.name);
+        let body = spec::preview_database(&db, &image, &env, &mounts, network, &alias, pr);
+        let container = docker::create_and_start(&state.docker, &name, body).await?;
+        if let Some(port) = db.port {
+            let check = format!("jd-check-{alias}-{}", &project.id.simple().to_string()[..8]);
+            if !probe(state, network, &name, port, "", &check, log).await? {
+                bail!("{alias} did not start");
+            }
+        }
+        if db.engine.as_deref() == Some("redis") {
+            log.line(format!(
+                "{alias} starts empty: Redis copies aren't filled from backups"
+            ));
+            continue;
+        }
+        match backups::restore_latest(state, &db, &container).await {
+            Ok(true) => log.line(format!("Filled {alias} from {}'s latest backup", db.name)),
+            Ok(false) => log.line(format!(
+                "{} has no backup yet, so {alias} starts empty",
+                db.name
+            )),
+            Err(e) => log.line(format!(
+                "Restoring {}'s latest backup failed ({e:#}); {alias} starts empty",
+                db.name
+            )),
+        }
     }
     Ok(())
 }
@@ -642,6 +744,28 @@ pub async fn remove_preview(state: &SharedState, service_id: Uuid, pr: i32) -> R
     for container in docker::list(&state.docker, &labels).await? {
         if let Some(cid) = container.id {
             docker::remove(&state.docker, &cid).await?;
+        }
+    }
+    // The pull request's database copies, with their volumes.
+    if let Ok(service) = services::get_service(&state.db, service_id).await {
+        let project = service.project_id.to_string();
+        let labels = [
+            (LABEL_PROJECT, project.as_str()),
+            (LABEL_PR, pr_label.as_str()),
+            (LABEL_KIND, spec::PREVIEW_DATABASE),
+        ];
+        for container in docker::list(&state.docker, &labels).await? {
+            if let Some(cid) = container.id {
+                docker::remove(&state.docker, &cid).await?;
+            }
+        }
+        for db in services::list_services(&state.db, service.project_id).await? {
+            if db.kind == "database" {
+                for volume in services::volumes(&state.db, db.id).await? {
+                    docker::remove_volume(&state.docker, &format!("{}-pr{pr}", volume.name))
+                        .await?;
+                }
+            }
         }
     }
     for image in built_images(&state.db, service_id, Some(pr)).await? {

@@ -44,6 +44,14 @@ pub struct ProjectView {
     #[serde(flatten)]
     project: Project,
     services: Vec<ServiceView>,
+    /// Every environment of this project, production first.
+    environments: Vec<EnvironmentRef>,
+}
+
+#[derive(Serialize)]
+struct EnvironmentRef {
+    id: Uuid,
+    environment: String,
 }
 
 pub(super) async fn latest_deployment(
@@ -138,13 +146,23 @@ async fn project_view(
             .map(|service| view_service(state, &project, service, containers, base)),
     )
     .await?;
+    let environments = services::environments(&state.db, &project)
+        .await?
+        .into_iter()
+        .map(|p| EnvironmentRef {
+            id: p.id,
+            environment: p.environment,
+        })
+        .collect();
     Ok(ProjectView {
         project,
         services: views.into_iter().map(|v| v.for_role(role)).collect(),
+        environments,
     })
 }
 
-/// One Docker listing and one settings read for the whole page.
+/// One Docker listing and one settings read for the whole page. Lists base
+/// projects; their environments come with each.
 pub async fn list(
     Can(user): Viewer,
     State(state): State<SharedState>,
@@ -155,6 +173,7 @@ pub async fn list(
     let views = futures::future::try_join_all(
         projects
             .into_iter()
+            .filter(|p| p.base_id.is_none())
             .map(|project| project_view(&state, project, &containers, &base, user.role)),
     )
     .await?;
@@ -196,6 +215,59 @@ pub async fn delete(
 ) -> Result<StatusCode> {
     services::delete_project(&state, id).await?;
     Ok(StatusCode::ACCEPTED)
+}
+
+#[derive(Deserialize)]
+pub struct NewEnvironment {
+    environment: String,
+    /// The branch app services track in it; empty keeps each one's own.
+    branch: Option<String>,
+}
+
+pub async fn create_environment(
+    _: Member,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<NewEnvironment>,
+) -> Result<(StatusCode, Json<Project>)> {
+    let from = services::get_project(&state.db, id).await?;
+    let project = services::create_environment(
+        &state,
+        &from,
+        body.environment.trim(),
+        body.branch.as_deref(),
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(project)))
+}
+
+#[derive(Deserialize)]
+pub struct Sync {
+    /// The environment to copy settings from.
+    from: Uuid,
+}
+
+pub async fn sync_environment(
+    _: Member,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<Sync>,
+) -> Result<Json<services::SyncReport>> {
+    let target = services::get_project(&state.db, id).await?;
+    let source = services::get_project(&state.db, body.from).await?;
+    Ok(Json(
+        services::sync_environment(&state, &target, &source).await?,
+    ))
+}
+
+/// Which services reference which: variable names only, so viewers may see it.
+pub async fn graph(
+    _: Viewer,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<services::Edge>>> {
+    services::get_project(&state.db, id).await?;
+    Ok(Json(services::project_graph(&state, id).await?))
 }
 
 // ---------------------------------------------------------------- services

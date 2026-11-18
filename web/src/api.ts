@@ -92,7 +92,12 @@ export interface Project {
   id: string;
   name: string;
   created_at: string;
+  /** production for the base project. */
+  environment: string;
+  base_id: string | null;
   services: Service[];
+  /** Every environment of the project, production first. */
+  environments: { id: string; environment: string }[];
 }
 
 export interface Domain {
@@ -102,7 +107,7 @@ export interface Domain {
 }
 
 export interface ServiceDetail extends Service {
-  project: { id: string; name: string };
+  project: { id: string; name: string; environment: string };
   volumes: { id: string; name: string; mount_path: string }[];
   domains: Domain[];
   generated_host: string | null;

@@ -233,6 +233,63 @@ pub fn helper(
     }
 }
 
+/// A pull request's own copy of a database: the same image and credentials, its
+/// own volumes, reachable on the project network as `alias`.
+pub fn preview_database(
+    db: &Service,
+    image: &str,
+    env: &[(String, String)],
+    volumes: &[(String, String)],
+    network: &str,
+    alias: &str,
+    pr: i32,
+) -> ContainerCreateBody {
+    ContainerCreateBody {
+        image: Some(image.to_string()),
+        env: Some(env.iter().map(|(k, v)| format!("{k}={v}")).collect()),
+        labels: Some(HashMap::from([
+            (MANAGED.to_string(), "true".to_string()),
+            (LABEL_PROJECT.to_string(), db.project_id.to_string()),
+            (LABEL_SERVICE.to_string(), db.id.to_string()),
+            (LABEL_KIND.to_string(), PREVIEW_DATABASE.to_string()),
+            (LABEL_PR.to_string(), pr.to_string()),
+        ])),
+        cmd: db.engine.as_deref().and_then(engines::command),
+        host_config: Some(HostConfig {
+            restart_policy: Some(RestartPolicy {
+                name: Some(RestartPolicyNameEnum::UNLESS_STOPPED),
+                maximum_retry_count: None,
+            }),
+            mounts: Some(
+                volumes
+                    .iter()
+                    .map(|(name, path)| Mount {
+                        target: Some(path.clone()),
+                        source: Some(name.clone()),
+                        typ: Some(MountType::VOLUME),
+                        ..Default::default()
+                    })
+                    .collect(),
+            ),
+            log_config: Some(bounded_logs()),
+            ..Default::default()
+        }),
+        networking_config: Some(NetworkingConfig {
+            endpoints_config: Some(HashMap::from([(
+                network.to_string(),
+                EndpointSettings {
+                    aliases: Some(vec![alias.to_string()]),
+                    ..Default::default()
+                },
+            )])),
+        }),
+        ..Default::default()
+    }
+}
+
+/// `jd.kind` of a pull request's database copy.
+pub const PREVIEW_DATABASE: &str = "preview-db";
+
 /// A container from a service's own image that runs once and exits: a
 /// pre-deploy command, a scheduled run or a one-off command. It sits on the
 /// project network so it reaches the database, takes no traffic and no
@@ -268,6 +325,28 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use uuid::Uuid;
+
+    #[test]
+    fn preview_databases_answer_on_their_own_alias_and_keep_their_data() {
+        let mut db = service();
+        db.kind = "database".into();
+        db.engine = Some("postgres".into());
+        let volumes = vec![(
+            "jd-vol-x-pr4".to_string(),
+            "/var/lib/postgresql/data".to_string(),
+        )];
+        let body = preview_database(&db, "postgres:17", &[], &volumes, "jd-proj-1", "db-pr-4", 4);
+        let labels = body.labels.unwrap();
+        assert_eq!(labels[LABEL_KIND], PREVIEW_DATABASE);
+        assert_eq!(labels[LABEL_PR], "4");
+        let endpoints = body.networking_config.unwrap().endpoints_config.unwrap();
+        assert_eq!(
+            endpoints["jd-proj-1"].aliases,
+            Some(vec!["db-pr-4".to_string()])
+        );
+        let mounts = body.host_config.unwrap().mounts.unwrap();
+        assert_eq!(mounts[0].source.as_deref(), Some("jd-vol-x-pr4"));
+    }
 
     #[test]
     fn one_off_runs_its_command_through_a_shell_on_the_project_network() {

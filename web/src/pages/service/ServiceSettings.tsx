@@ -217,7 +217,7 @@ export default function ServiceSettings({ service: s }: { service: ServiceDetail
             <SectionTitle>Before each release</SectionTitle>
             <Field
               label="Pre-deploy command"
-              hint="Runs once from the new image, with this service's variables, before it goes live: database migrations, for example. If it fails, the deploy stops and the current version keeps running. Skipped for previews, which share the production database."
+              hint="Runs once from the new image, with this service's variables, before it goes live: database migrations, for example. If it fails, the deploy stops and the current version keeps running. Previews run it against their own database copies, and skip it when they reach the database by a fixed address."
             >
               <Input
                 className="font-mono text-[14px]"
@@ -262,8 +262,9 @@ export default function ServiceSettings({ service: s }: { service: ServiceDetail
               hint={
                 <>
                   Each open pull request gets its own container at pr-NUMBER-{s.generated_host ?? "service-project.domain"}, removed
-                  when it closes. Also tick "Pull requests" in the webhook's events. Previews use this service's
-                  variables, so they talk to the same database.
+                  when it closes. Also tick "Pull requests" in the webhook's events. Each pull request gets its own copy of the
+                  project's databases, filled from their latest backup, when this service reaches them through references like
+                  {" ${{db.URL}}"}.
                 </>
               }
               checked={form.preview_enabled}

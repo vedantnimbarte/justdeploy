@@ -655,6 +655,34 @@ pub async fn run_restore(state: &SharedState, backup_id: Uuid) -> Result<()> {
     Ok(())
 }
 
+/// Fills a fresh copy of a database from its newest successful backup. False
+/// when there is no backup to use.
+pub async fn restore_latest(
+    state: &SharedState,
+    service: &Service,
+    container: &str,
+) -> anyhow::Result<bool> {
+    let engine = require_database(service)?;
+    let command =
+        engines::restore_command(engine.id).ok_or_else(|| anyhow!("no restore command"))?;
+    let latest = sqlx::query!(
+        r#"SELECT destination_id AS "destination_id!", object_key FROM backups
+           WHERE service_id = $1 AND status = 'succeeded' AND destination_id IS NOT NULL
+           ORDER BY created_at DESC LIMIT 1"#,
+        service.id
+    )
+    .fetch_optional(&state.db)
+    .await?;
+    let Some(latest) = latest else {
+        return Ok(false);
+    };
+    let config = load_destination(state, latest.destination_id).await?;
+    let (store, prefix) = open_store(state, &config)?;
+    let path = Path::from(format!("{prefix}{}", latest.object_key));
+    restore_into(state, container, command, store, &path).await?;
+    Ok(true)
+}
+
 const RESTORE_FILE: &str = "/tmp/jd-restore.gz";
 
 /// Copies a gzipped backup into a container, then runs `gzip -dc file | command`.

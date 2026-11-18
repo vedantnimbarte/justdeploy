@@ -3,7 +3,9 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api, kindLabel, timeAgo, triggerLabel, type Project, type Service } from "../api";
 import { useMe } from "../me";
-import { Badge, Band, Button, ButtonLink, ConfirmDelete, EmptyState, ErrorText, PageHeader, StatusDot } from "../ui";
+import { Badge, Band, Button, ButtonLink, ConfirmDelete, EmptyState, ErrorText, PageHeader, Segmented, StatusDot } from "../ui";
+import { Canvas } from "./Canvas";
+import { baseName, EnvironmentBar } from "./Environments";
 import { EnvEditor } from "./service/Env";
 
 export default function ProjectPage() {
@@ -11,6 +13,21 @@ export default function ProjectPage() {
   const navigate = useNavigate();
   const { can } = useMe();
   const [deleting, setDeleting] = useState(false);
+  const [view, setView] = useState<"list" | "canvas">(() => {
+    try {
+      return localStorage.getItem("jd-project-view") === "canvas" ? "canvas" : "list";
+    } catch {
+      return "list";
+    }
+  });
+  const pickView = (v: "list" | "canvas") => {
+    setView(v);
+    try {
+      localStorage.setItem("jd-project-view", v);
+    } catch {
+      // Remembering the choice is a convenience; without storage it lasts this visit.
+    }
+  };
   const project = useQuery({
     queryKey: ["project", id],
     queryFn: () => api.get<Project>(`/projects/${id}`),
@@ -34,7 +51,7 @@ export default function ProjectPage() {
     <>
       <PageHeader
         eyebrow={<Link to="/projects">Projects</Link>}
-        title={p.name}
+        title={baseName(p)}
         lead={`${p.services.length} service${p.services.length === 1 ? "" : "s"} on a private network. Services reach each other by name.`}
         actions={
           can("member") && (
@@ -46,12 +63,29 @@ export default function ProjectPage() {
             </>
           )
         }
-      />
+      >
+        <EnvironmentBar project={p} />
+      </PageHeader>
       <Band>
+        {p.services.length > 0 && (
+          <div className="mb-4 flex justify-end">
+            <Segmented
+              label="Show services as"
+              value={view}
+              onChange={pickView}
+              options={[
+                { value: "list", label: "List" },
+                { value: "canvas", label: "Canvas" },
+              ]}
+            />
+          </div>
+        )}
         {p.services.length === 0 ? (
           <EmptyState title="This project is empty" action={can("member") && <ButtonLink to={`/projects/${id}/new`}>Add service</ButtonLink>}>
             Add an app from a Git repository, a Docker image, or a database.
           </EmptyState>
+        ) : view === "canvas" ? (
+          <Canvas projectId={p.id} services={p.services} />
         ) : (
           <div className="overflow-hidden rounded-panel border border-line bg-surface">
             <div className="hidden grid-cols-[minmax(0,1.1fr)_8rem_minmax(0,1.2fr)_minmax(0,1.3fr)] gap-6 border-b border-line bg-subtle px-5 py-2.5 text-[13px] font-medium text-muted lg:grid">

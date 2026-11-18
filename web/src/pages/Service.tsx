@@ -3,6 +3,7 @@ import { lazy, Suspense } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { api, kindLabel, type ServiceDetail } from "../api";
 import { useMe } from "../me";
+import { baseName } from "./Environments";
 import { Badge, Band, Button, CodeLine, ErrorText, PageHeader, StatusDot, Tabs, useToast } from "../ui";
 import Backups from "./service/Backups";
 import Deployments from "./service/Deployments";
@@ -63,7 +64,10 @@ export default function ServicePage() {
       <PageHeader
         eyebrow={
           <>
-            <Link to="/projects">Projects</Link> / <Link to={`/projects/${s.project.id}`}>{s.project.name}</Link>
+            <Link to="/projects">Projects</Link> / <Link to={`/projects/${s.project.id}`}>
+              {baseName(s.project)}
+              {s.project.environment !== "production" && ` (${s.project.environment})`}
+            </Link>
           </>
         }
         title={s.name}

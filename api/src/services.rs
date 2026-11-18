@@ -68,15 +68,331 @@ pub async fn create_project(db: &PgPool, name: &str) -> Result<Project> {
     .await?)
 }
 
+/// Deleting a base project deletes its environments too.
 pub async fn delete_project(state: &SharedState, id: Uuid) -> Result<()> {
-    get_project(&state.db, id).await?;
-    sqlx::query!(
-        "UPDATE services SET desired_state = 'deleting' WHERE project_id = $1",
-        id
+    let project = get_project(&state.db, id).await?;
+    let mut doomed = vec![project.id];
+    if project.base_id.is_none() {
+        doomed.extend(
+            environments(&state.db, &project)
+                .await?
+                .into_iter()
+                .filter(|p| p.id != project.id)
+                .map(|p| p.id),
+        );
+    }
+    for id in doomed {
+        sqlx::query!(
+            "UPDATE services SET desired_state = 'deleting' WHERE project_id = $1",
+            id
+        )
+        .execute(&state.db)
+        .await?;
+        queue::enqueue(&state.db, Job::RemoveProject { project_id: id }).await?;
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------- environments
+
+/// The base project and every environment made from it, production first.
+pub async fn environments(db: &PgPool, project: &Project) -> Result<Vec<Project>> {
+    let root = project.base_id.unwrap_or(project.id);
+    Ok(sqlx::query_as!(
+        Project,
+        "SELECT * FROM projects WHERE id = $1 OR base_id = $1
+         ORDER BY base_id IS NOT NULL, environment",
+        root
     )
-    .execute(&state.db)
+    .fetch_all(db)
+    .await?)
+}
+
+/// A new environment copied from `from`: its services with their settings and
+/// variables, the shared variables, and fresh empty volumes. Not copied: data,
+/// domains, host ports, previews and backup schedules. App services can track
+/// another branch. Everything then deploys.
+pub async fn create_environment(
+    state: &SharedState,
+    from: &Project,
+    environment: &str,
+    branch: Option<&str>,
+) -> Result<Project> {
+    names::validate(environment, "environment")?;
+    let root = get_project(&state.db, from.base_id.unwrap_or(from.id)).await?;
+    if environment == root.environment {
+        return Err(Error::Conflict(format!("{environment} already exists")));
+    }
+    let name = format!("{}-{environment}", root.name);
+    names::validate(&name, "project")?;
+
+    let mut tx = state.db.begin().await?;
+    let project = sqlx::query_as!(
+        Project,
+        "INSERT INTO projects (id, name, environment, base_id) VALUES ($1, $2, $3, $4) RETURNING *",
+        Uuid::new_v4(),
+        name,
+        environment,
+        root.id
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| match Error::from(e) {
+        Error::Conflict(_) => Error::Conflict(format!("{environment} already exists")),
+        other => other,
+    })?;
+    sqlx::query!(
+        "INSERT INTO shared_env_vars (project_id, key, value_enc)
+         SELECT $2, key, value_enc FROM shared_env_vars WHERE project_id = $1",
+        from.id,
+        project.id
+    )
+    .execute(&mut *tx)
     .await?;
-    queue::enqueue(&state.db, Job::RemoveProject { project_id: id }).await
+    let mut created = Vec::new();
+    for source in list_services(&state.db, from.id).await? {
+        created.push(clone_service(&mut tx, &source, &project, branch).await?);
+    }
+    tx.commit().await?;
+    for service in &created {
+        deploy(state, service, "create").await?;
+    }
+    Ok(project)
+}
+
+/// Copies one service into another environment, with its variables and new
+/// empty volumes.
+async fn clone_service(
+    tx: &mut sqlx::PgConnection,
+    source: &Service,
+    project: &Project,
+    branch: Option<&str>,
+) -> Result<Service> {
+    if names::generated_host(&source.name, &project.name, "x").len() > 63 + 2 {
+        return Err(bad_request(format!(
+            "{} and {} together are too long for a hostname; use a shorter environment name",
+            source.name, project.name
+        )));
+    }
+    let branch = match (source.kind.as_str(), branch.map(str::trim)) {
+        ("app", Some(b)) if !b.is_empty() => Some(b.to_string()),
+        _ => source.branch.clone(),
+    };
+    let service = sqlx::query_as!(
+        Service,
+        r#"
+        INSERT INTO services (id, project_id, name, kind, repo_url, branch, root_dir, git_token_enc,
+            build_type, dockerfile_path, image, engine, port, public, health_path, cpu_millis,
+            memory_mb, webhook_secret, pre_deploy_command, cron_schedule)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
+            $19, $20)
+        RETURNING *
+        "#,
+        Uuid::new_v4(),
+        project.id,
+        source.name,
+        source.kind,
+        source.repo_url,
+        branch,
+        source.root_dir,
+        source.git_token_enc,
+        source.build_type,
+        source.dockerfile_path,
+        source.image,
+        source.engine,
+        source.port,
+        source.public,
+        source.health_path,
+        source.cpu_millis,
+        source.memory_mb,
+        random_string(32),
+        source.pre_deploy_command,
+        source.cron_schedule,
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "INSERT INTO env_vars (service_id, key, value_enc)
+         SELECT $2, key, value_enc FROM env_vars WHERE service_id = $1",
+        source.id,
+        service.id
+    )
+    .execute(&mut *tx)
+    .await?;
+    let paths = sqlx::query_scalar!(
+        "SELECT mount_path FROM volumes WHERE service_id = $1",
+        source.id
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    for path in paths {
+        add_volume(tx, service.id, &path).await?;
+    }
+    Ok(service)
+}
+
+#[derive(serde::Serialize, Default)]
+pub struct SyncReport {
+    /// Services whose settings or variables changed.
+    updated: Vec<String>,
+    /// Services that only existed in the source and were copied over.
+    added: Vec<String>,
+}
+
+/// Brings `target` in line with `source`: settings copied onto services of the
+/// same name, missing services added, missing variables added. Kept as they
+/// are: the target's branches, variable values, domains, host ports, previews
+/// and any service only it has. Whatever changed redeploys.
+pub async fn sync_environment(
+    state: &SharedState,
+    target: &Project,
+    source: &Project,
+) -> Result<SyncReport> {
+    if target.id == source.id
+        || target.base_id.unwrap_or(target.id) != source.base_id.unwrap_or(source.id)
+    {
+        return Err(bad_request(
+            "pick another environment of the same project to copy from",
+        ));
+    }
+    let existing: HashMap<String, Service> = list_services(&state.db, target.id)
+        .await?
+        .into_iter()
+        .map(|s| (s.name.clone(), s))
+        .collect();
+    let mut report = SyncReport::default();
+    let mut rebuild = Vec::new();
+    let mut rerun = Vec::new();
+    let mut fresh = Vec::new();
+    let mut tx = state.db.begin().await?;
+    for s in list_services(&state.db, source.id).await? {
+        let Some(t) = existing.get(&s.name) else {
+            fresh.push(clone_service(&mut tx, &s, target, None).await?);
+            report.added.push(s.name.clone());
+            continue;
+        };
+        let source_changed = t.repo_url != s.repo_url
+            || t.root_dir != s.root_dir
+            || t.build_type != s.build_type
+            || t.dockerfile_path != s.dockerfile_path
+            || t.image != s.image
+            || t.git_token_enc != s.git_token_enc;
+        let changed = source_changed
+            || t.port != s.port
+            || t.public != s.public
+            || t.health_path != s.health_path
+            || t.cpu_millis != s.cpu_millis
+            || t.memory_mb != s.memory_mb
+            || t.pre_deploy_command != s.pre_deploy_command
+            || t.cron_schedule != s.cron_schedule;
+        if changed {
+            sqlx::query!(
+                "UPDATE services SET repo_url = $2, root_dir = $3, build_type = $4,
+                     dockerfile_path = $5, image = $6, git_token_enc = $7, port = $8, public = $9,
+                     health_path = $10, cpu_millis = $11, memory_mb = $12,
+                     pre_deploy_command = $13, cron_schedule = $14, updated_at = now()
+                 WHERE id = $1",
+                t.id,
+                s.repo_url,
+                s.root_dir,
+                s.build_type,
+                s.dockerfile_path,
+                s.image,
+                s.git_token_enc,
+                s.port,
+                s.public,
+                s.health_path,
+                s.cpu_millis,
+                s.memory_mb,
+                s.pre_deploy_command,
+                s.cron_schedule
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+        let added = sqlx::query!(
+            "INSERT INTO env_vars (service_id, key, value_enc)
+             SELECT $2, key, value_enc FROM env_vars WHERE service_id = $1
+             ON CONFLICT DO NOTHING",
+            s.id,
+            t.id
+        )
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if changed || added > 0 {
+            report.updated.push(s.name.clone());
+            if source_changed {
+                rebuild.push(t.id);
+            } else {
+                rerun.push(t.id);
+            }
+        }
+    }
+    let shared_added = sqlx::query!(
+        "INSERT INTO shared_env_vars (project_id, key, value_enc)
+         SELECT $2, key, value_enc FROM shared_env_vars WHERE project_id = $1
+         ON CONFLICT DO NOTHING",
+        source.id,
+        target.id
+    )
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    tx.commit().await?;
+
+    if shared_added > 0 {
+        for t in existing.values() {
+            if !rebuild.contains(&t.id) && !rerun.contains(&t.id) {
+                rerun.push(t.id);
+            }
+        }
+    }
+    for service in &fresh {
+        deploy(state, service, "settings").await?;
+    }
+    for id in rebuild {
+        deploy(state, &get_service(&state.db, id).await?, "settings").await?;
+    }
+    for id in rerun {
+        rerelease(state, &get_service(&state.db, id).await?, "settings").await?;
+    }
+    Ok(report)
+}
+
+#[derive(serde::Serialize)]
+pub struct Edge {
+    from: Uuid,
+    to: Uuid,
+    /// The variables that make the reference; names only.
+    keys: Vec<String>,
+}
+
+/// Which services point at which, through `${{service.KEY}}` references.
+pub async fn project_graph(state: &SharedState, project_id: Uuid) -> Result<Vec<Edge>> {
+    let services = list_services(&state.db, project_id).await?;
+    let ids: HashMap<&str, Uuid> = services.iter().map(|s| (s.name.as_str(), s.id)).collect();
+    let shared: BTreeMap<String, String> =
+        shared_env(state, project_id).await?.into_iter().collect();
+    let mut edges: BTreeMap<(Uuid, Uuid), Vec<String>> = BTreeMap::new();
+    for service in &services {
+        let mut vars = shared.clone();
+        vars.extend(env(state, service.id).await?);
+        for (key, value) in &vars {
+            for (target, _) in references(value) {
+                if let Some(&to) = ids.get(target.as_str()).filter(|to| **to != service.id) {
+                    let keys = edges.entry((service.id, to)).or_default();
+                    if !keys.contains(key) {
+                        keys.push(key.clone());
+                    }
+                }
+            }
+        }
+    }
+    Ok(edges
+        .into_iter()
+        .map(|((from, to), keys)| Edge { from, to, keys })
+        .collect())
 }
 
 // ---------------------------------------------------------------- services
@@ -767,7 +1083,14 @@ pub async fn replace_shared_env(
 /// the service's own, which win, with `${{service.KEY}}` references to sibling
 /// services filled in. A reference can name any variable of the sibling, or
 /// HOST, PORT, and for a database URL.
-pub async fn runtime_env(state: &SharedState, service: &Service) -> Result<Vec<(String, String)>> {
+///
+/// For a pull request's preview, references to a database point at that
+/// pull request's own copy of it.
+pub async fn runtime_env(
+    state: &SharedState,
+    service: &Service,
+    pr: Option<i32>,
+) -> Result<Vec<(String, String)>> {
     let shared: BTreeMap<String, String> = shared_env(state, service.project_id)
         .await?
         .into_iter()
@@ -787,13 +1110,19 @@ pub async fn runtime_env(state: &SharedState, service: &Service) -> Result<Vec<(
         }
         let mut vars = shared.clone();
         vars.extend(env(state, sibling.id).await?);
-        vars.insert("HOST".into(), sibling.name.clone());
+        let host = match pr {
+            Some(pr) if is_copied_for_previews(&sibling) => {
+                names::preview_database(&sibling.name, pr)
+            }
+            _ => sibling.name.clone(),
+        };
         if let Some(port) = sibling.port {
             vars.insert("PORT".into(), port.to_string());
         }
-        if let Some(url) = connection_url(state, &sibling).await? {
+        if let Some(url) = connection_url_at(state, &sibling, &host).await? {
             vars.insert("URL".into(), url);
         }
+        vars.insert("HOST".into(), host);
         siblings.insert(sibling.name.clone(), vars);
     }
     own.into_iter()
@@ -851,11 +1180,43 @@ fn substitute(
 
 /// For a database, how sibling services connect to it.
 pub async fn connection_url(state: &SharedState, service: &Service) -> Result<Option<String>> {
+    connection_url_at(state, service, &service.name).await
+}
+
+async fn connection_url_at(
+    state: &SharedState,
+    service: &Service,
+    host: &str,
+) -> Result<Option<String>> {
     let Some(engine) = service.engine.as_deref() else {
         return Ok(None);
     };
     let env: HashMap<String, String> = env(state, service.id).await?.into_iter().collect();
-    Ok(engines::connection_url(engine, &service.name, &env))
+    Ok(engines::connection_url(engine, host, &env))
+}
+
+/// Databases that get a copy per pull request: deployed and meant to be running.
+pub fn is_copied_for_previews(service: &Service) -> bool {
+    service.kind == "database"
+        && service.current_deployment_id.is_some()
+        && service.desired_state == "running"
+}
+
+/// Whether the service reaches a database of its project through a reference,
+/// so a preview of it talks to its own copy rather than production's.
+pub async fn references_database(state: &SharedState, service: &Service) -> Result<bool> {
+    let databases: Vec<String> = list_services(&state.db, service.project_id)
+        .await?
+        .into_iter()
+        .filter(is_copied_for_previews)
+        .map(|s| s.name)
+        .collect();
+    let mut vars = shared_env(state, service.project_id).await?;
+    vars.extend(env(state, service.id).await?);
+    Ok(vars
+        .iter()
+        .flat_map(|(_, v)| references(v))
+        .any(|(target, _)| databases.contains(&target)))
 }
 
 // ---------------------------------------------------------------- domains and volumes

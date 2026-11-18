@@ -71,6 +71,12 @@ pub fn router(state: SharedState) -> Router {
             get(projects::get_shared_env).put(projects::put_shared_env),
         )
         .route(
+            "/projects/{id}/environments",
+            post(projects::create_environment),
+        )
+        .route("/projects/{id}/sync", post(projects::sync_environment))
+        .route("/projects/{id}/graph", get(projects::graph))
+        .route(
             "/services/{id}",
             get(projects::get_service)
                 .patch(projects::update_service)

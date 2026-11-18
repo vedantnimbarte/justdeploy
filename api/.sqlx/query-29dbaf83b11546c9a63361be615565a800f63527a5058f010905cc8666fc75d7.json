@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO shared_env_vars (project_id, key, value_enc)\n         SELECT $2, key, value_enc FROM shared_env_vars WHERE project_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "29dbaf83b11546c9a63361be615565a800f63527a5058f010905cc8666fc75d7"
+}

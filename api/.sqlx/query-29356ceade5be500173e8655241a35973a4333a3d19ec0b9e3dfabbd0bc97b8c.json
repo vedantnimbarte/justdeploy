@@ -35,6 +35,28 @@
             "name": "created_at"
           }
         }
+      },
+      {
+        "ordinal": 3,
+        "name": "environment",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "environment"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "base_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "base_id"
+          }
+        }
       }
     ],
     "parameters": {
@@ -45,7 +67,9 @@
     "nullable": [
       false,
       false,
-      false
+      false,
+      false,
+      true
     ]
   },
   "hash": "29356ceade5be500173e8655241a35973a4333a3d19ec0b9e3dfabbd0bc97b8c"

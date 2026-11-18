@@ -31,6 +31,7 @@ who may do what, not for hosting strangers.
 - [Install on a server](#install-on-a-server)
 - [First steps](#first-steps)
 - [Projects and services](#projects-and-services)
+- [Environments](#environments)
 - [Builds](#builds)
 - [Deploys, health checks and rollback](#deploys-health-checks-and-rollback)
 - [Push to deploy and pull request previews](#push-to-deploy-and-pull-request-previews)
@@ -41,6 +42,7 @@ who may do what, not for hosting strangers.
 - [Runs and cron jobs](#runs-and-cron-jobs)
 - [Logs, metrics and the terminal](#logs-metrics-and-the-terminal)
 - [Team, roles and access](#team-roles-and-access)
+- [Command line: jd](#command-line-jd)
 - [Notifications](#notifications)
 - [System overview](#system-overview)
 - [Templates](#templates)
@@ -203,9 +205,36 @@ Per service you can set:
   scheduled time and exits. See [Runs and cron jobs](#runs-and-cron-jobs).
 - **Pre-deploy command**, run before each release, typically database migrations. See below.
 
+The project page shows services as a list or as a **canvas**: cards laid out so that each service sits
+left of what it references, joined by arrows (hover one to see which variables make the link).
+
 Status on the dashboard is one of *Running*, *Scheduled* (a cron job with a deployed image),
 *Deploying*, *Crashed* (the container exists but is not running), *Failed* (nothing has deployed
 successfully), *Stopped* or *Not deployed*.
+
+---
+
+## Environments
+
+A project starts with one environment, **production**. *New environment* on the project page copies
+it into, say, **staging**: every service with its settings and variables, and the shared variables,
+into its own network with fresh, empty databases. Apps built from Git can track another branch there
+(`develop`, for example). Not copied: data, domains, host ports, previews and backup schedules. The new
+environment then deploys, and its services answer at `<service>-<project>-<environment>.<base domain>`.
+Inside it, services reach each other by the same names as in production, so `db:5432` is staging's
+database.
+
+Each environment is its own project underneath (`shop-staging`), so everything else (variables,
+domains, scheduled runs, roles) works the same. The switcher at the top of the project page moves
+between them.
+
+**Copy settings from…** brings an environment in line with another: settings (source, build, image,
+port, health check, limits, schedule, pre-deploy command) are copied onto services of the same name,
+services it doesn't have are added, and variables it doesn't have are added. Kept as they are:
+branches, the values of its existing variables, domains, host ports, previews, data, and services only
+it has. Services that change redeploy.
+
+Deleting the production project deletes its environments too.
 
 ---
 
@@ -267,7 +296,9 @@ rolling back further rebuilds that exact commit.
 **Pre-deploy command.** When set (for example `npm run db:migrate`), it runs once in a container from
 the new image, with the service's variables and on its project network, before anything is released.
 Its output is in the deployment log. If it exits non-zero the deployment fails and the current version
-keeps running. It is skipped for previews, which share the production database.
+keeps running. A preview runs it against its own database copies (see below); a preview whose service
+reaches its database by a fixed address rather than a reference skips it, since that address is
+production's.
 
 **Several deploys at once.** Up to `JD_DEPLOY_WORKERS` deploys (default 2) run at the same time, each
 for a different service. Deploys of the same service always run one at a time, in order.
@@ -303,9 +334,16 @@ whose signature does not match is refused with 403.
 
 **Previews (GitHub).** Turn on *Preview deploys for pull requests* for the service. Each opened or
 updated pull request is built and served at `pr-<number>-<service>-<project>.<base domain>`, including
-pull requests from forks; closing it removes the container and its images. Previews use the service's
-variables, **so they talk to the same database as production**. Keep that in mind before turning
-them on for an app that writes data.
+pull requests from forks; closing it removes the container and its images.
+
+**Preview databases.** The first time a pull request deploys, it gets its own copy of each database in
+the project: same image and credentials, its own volumes, filled from that database's newest
+successful backup (or empty when there is none yet; Redis copies always start empty). The copy answers
+on the project network as `<database>-pr-<number>`, and a preview's references point at it:
+`${{db.URL}}` in a preview is the pull request's database. Closing the pull request deletes the
+copies and their volumes. A value that names the database by a fixed address, like
+`postgres://…@db:5432/app`, still reaches production's, so use references for anything a preview
+writes to.
 
 The webhook URL uses `JD_PUBLIC_URL`, which must be reachable from GitHub or GitLab.
 
@@ -446,6 +484,44 @@ when it was last used. A lost phone: an owner turns two-factor off for that pers
 **Activity.** Admins see every change made through the dashboard or the API under Team: who did what
 to which service, project or person, plus sign-ins, terminal sessions and what justdeploy itself did
 (finishing a deletion or a restore).
+
+---
+
+## Command line: jd
+
+`jd` deploys, follows logs, edits variables and runs commands from a terminal or CI, with an API
+token (Account → API tokens).
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vedantnimbarte/justdeploy/main/deploy/install-cli.sh | sh
+jd login https://deploy.example.com jd_…
+```
+
+Each release has builds for Linux, macOS and Windows; elsewhere,
+`cargo install --git https://github.com/vedantnimbarte/justdeploy justdeploy-cli`.
+
+| Command | |
+|---|---|
+| `jd projects` | Projects, their environments and services, with status |
+| `jd status shop/web` | A service's status and latest deploy |
+| `jd deploy shop/web` | Deploy the latest commit or image and follow the build log; exits non-zero if it fails. `--no-wait` returns once it's queued |
+| `jd restart shop/web` | Run the current image again |
+| `jd logs shop/web` | Follow the running service's output |
+| `jd env shop/web` | Print variables as `KEY=value` |
+| `jd env set shop/web KEY=value …` · `jd env unset shop/web KEY …` | Change variables; the service redeploys |
+| `jd run shop/web -- npm run db:seed` | Run a command once from the live image; prints its output and exits with its code |
+| `jd whoami` | Who the token belongs to |
+
+An environment is addressed by its project name: `shop-staging/web`. In CI, set `JD_URL` and
+`JD_TOKEN` instead of running `jd login`:
+
+```yaml
+- run: curl -fsSL https://raw.githubusercontent.com/vedantnimbarte/justdeploy/main/deploy/install-cli.sh | JD_INSTALL_DIR=$HOME/.local/bin sh
+- run: jd deploy shop/web
+  env:
+    JD_URL: https://deploy.example.com
+    JD_TOKEN: ${{ secrets.JD_TOKEN }}
+```
 
 ---
 
@@ -600,6 +676,9 @@ authenticate by signature.
 | `GET` `DELETE` | `/projects/{id}` | |
 | `POST` | `/projects/{id}/services` | Create a service and deploy it |
 | `GET` `PUT` | `/projects/{id}/env` | Shared variables, `[{key, value}]`, replaced as a whole |
+| `POST` | `/projects/{id}/environments` | `{environment, branch?}`: a new environment copied from this one; returns it |
+| `POST` | `/projects/{id}/sync` | `{from}`: copy settings from another environment; returns `{updated, added}` |
+| `GET` | `/projects/{id}/graph` | `[{from, to, keys}]`: which services reference which |
 | `GET` `PATCH` `DELETE` | `/services/{id}` | Detail · update settings (redeploys) · delete |
 | `POST` | `/services/{id}/actions` | `{action: deploy | restart | stop | start}` |
 | `GET` | `/services/{id}/deployments` | Last 50 deployments |
@@ -740,6 +819,7 @@ docker compose up -d justdeploy      # dashboard at http://localhost:8080
 | `api/src/notify.rs` | Notification channels and delivery to Slack, Discord or a webhook |
 | `api/src/auth.rs`, `crypto.rs` | People and roles, sessions, API tokens, invites, two-factor, rate limit; AES-GCM secrets |
 | `api/src/github.rs` | The GitHub App: manifest flow, installation tokens, repositories, app webhooks, commit statuses |
+| `cli/src/main.rs` | `jd`: the command-line client over the API |
 | `api/migrations/` | Schema |
 | `builder/` | The builder image: `build.sh` (clone, Dockerfile or Railpack) and `healthcheck.sh` |
 | `web/src/` | The dashboard: `ui.tsx` (design system components), `api.ts` (typed client), `pages/` |
@@ -769,7 +849,8 @@ web/          React dashboard (Vite, TypeScript, Tailwind, TanStack Query)
 builder/      Builder image: git, Docker CLI + BuildKit, Railpack
 templates/    Template catalog
 examples/     Example apps the code templates build
-deploy/       Installer
+cli/          jd, the command-line client
+deploy/       Installers (server and CLI)
 docker-compose.yml       justdeploy + Postgres + Traefik
 docker-compose.tls.yml   HTTPS overlay (Let's Encrypt)
 docker-compose.dev.yml   Development overrides
@@ -784,8 +865,8 @@ Dockerfile               Production image (API + dashboard)
 - **Roles are install-wide**: there is no per-project access yet.
 - **No recovery codes** for two-factor sign-in; an owner or `reset-password` turns it off instead.
 - **Run output** is saved when a run finishes, not streamed while it runs.
-- **Previews share the production database** (they reuse the service's variables), and are GitHub only;
-  GitLab merge requests do not get previews.
+- **Previews** are GitHub only; GitLab merge requests do not get previews. Their database copies come
+  from backups, so they are as fresh as the latest backup.
 - **Not tested end to end:** real Let's Encrypt issuance (it needs public DNS and port 80; the
   development setup runs plain HTTP on `*.localhost`), webhooks delivered by GitHub or GitLab
   themselves (tested with correctly signed requests), and AWS S3 itself (tested with SeaweedFS's S3

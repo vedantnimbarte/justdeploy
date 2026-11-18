@@ -202,6 +202,8 @@ fn describe(method: &str, route: &str) -> Option<&'static str> {
         ("DELETE", "/projects/{id}") => "deleted",
         ("PUT", "/projects/{id}/env") => "changed shared variables in",
         ("POST", "/projects/{id}/services") => "added a service to",
+        ("POST", "/projects/{id}/environments") => "added an environment to",
+        ("POST", "/projects/{id}/sync") => "copied settings into",
         ("PATCH", "/services/{id}") => "changed settings of",
         ("DELETE", "/services/{id}") => "deleted",
         ("POST", "/services/{id}/actions") => "acted on",

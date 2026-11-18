@@ -94,7 +94,7 @@ async fn execute(
         let project = services::get_project(&state.db, service.project_id).await?;
         let network = names::project_network(project.id);
         docker::ensure_network(&state.docker, &network).await?;
-        let env = services::runtime_env(&state, &service).await?;
+        let env = services::runtime_env(&state, &service, None).await?;
         let body = spec::one_off(&image, command.as_deref(), &env, &service, &network);
         let name = format!("jd-run-{}", &run_id.simple().to_string()[..12]);
         let code = docker::run_to_completion(&state.docker, &name, body, RUN_TIMEOUT, |line| {

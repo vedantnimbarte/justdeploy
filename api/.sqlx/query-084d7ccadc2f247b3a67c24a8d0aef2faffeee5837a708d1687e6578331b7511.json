@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE services SET repo_url = $2, root_dir = $3, build_type = $4,\n                     dockerfile_path = $5, image = $6, git_token_enc = $7, port = $8, public = $9,\n                     health_path = $10, cpu_millis = $11, memory_mb = $12,\n                     pre_deploy_command = $13, cron_schedule = $14, updated_at = now()\n                 WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Int4",
+        "Bool",
+        "Text",
+        "Int4",
+        "Int4",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "084d7ccadc2f247b3a67c24a8d0aef2faffeee5837a708d1687e6578331b7511"
+}

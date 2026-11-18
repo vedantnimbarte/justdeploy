@@ -57,6 +57,11 @@ pub fn preview_host(pr: i32, service: &str, project: &str, base: &str) -> String
     format!("pr-{pr}-{service}-{project}.{base}")
 }
 
+/// Where a pull request's copy of a database answers on the project network.
+pub fn preview_database(service: &str, pr: i32) -> String {
+    format!("{service}-pr-{pr}")
+}
+
 pub fn container(project: &str, service: &str, deployment: Uuid) -> String {
     format!("jd-{project}-{service}-{}", short(deployment))
 }
