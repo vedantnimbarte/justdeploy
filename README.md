@@ -111,7 +111,7 @@ All settings live in `/opt/justdeploy/.env`. The ones you are most likely to cha
 | `JD_ACME_EMAIL` | unset | Turns on HTTPS with Let's Encrypt |
 | `JD_DASHBOARD_DOMAIN` | unset | Serve the dashboard at this hostname over HTTPS |
 | `JD_PORT` | `8080` | Host port (or `ip:port`) for the dashboard |
-| `JD_VERSION` | `latest` | justdeploy image tag to run |
+| `JD_VERSION` | `latest` | justdeploy image tag to run, e.g. `0.1.0` (no `v`) |
 | `JD_DEPLOY_WORKERS` | `2` | Deploys that run at once |
 | `JD_LOG_DAYS` | `7` | Days service logs are kept for search |
 

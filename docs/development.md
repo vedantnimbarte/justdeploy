@@ -127,5 +127,8 @@ and `ghcr.io/vedantnimbarte/justdeploy-postgres`, tagged with the version, `majo
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
+The Git tag keeps its `v`, but the image tags drop it: `v0.1.0` publishes `0.1.0` and `0.1`, so
+servers pin a release with `JD_VERSION=0.1.0`.
+
 After the first release, make the three packages public in GitHub (*Packages → Package settings → Change
 visibility*) so servers can pull them without logging in.
