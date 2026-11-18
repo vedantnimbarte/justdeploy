@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
 import { api, timeAgo, type Destination, type Settings } from "../api";
+import { DnsPanel } from "../DnsSetup";
 import { Band, Button, Card, ErrorText, Field, Input, PageHeader, SectionTitle, Select, useToast } from "../ui";
 
 export default function SettingsPage() {
@@ -46,13 +47,18 @@ function DomainSettings({ settings }: { settings: Settings }) {
           label="Base domain"
           hint={
             <>
-              Services get <code>service-project.{domain || "example.com"}</code>. Point a wildcard DNS record{" "}
-              <code>*.{domain || "example.com"}</code> at this server. Use <code>localhost</code> on your own machine.
+              Services get <code>service-project.{domain || "example.com"}</code>, which needs one wildcard DNS record. Use{" "}
+              <code>localhost</code> on your own machine.
             </>
           }
         >
           <Input value={domain} onChange={(e) => setDomain(e.target.value.toLowerCase())} required />
         </Field>
+        {settings.base_domain !== "localhost" && (
+          <div className="overflow-hidden rounded-panel border border-line">
+            <DnsPanel host={`*.${settings.base_domain}`} tls={settings.tls} />
+          </div>
+        )}
         <div className="rounded-control bg-subtle p-4">
           {settings.tls ? (
             <p>

@@ -79,6 +79,7 @@ pub fn router(state: SharedState) -> Router {
             "/settings",
             get(admin::get_settings).put(admin::put_settings),
         )
+        .route("/dns-check", get(admin::dns_check))
         // webhooks authenticate by signature, not session
         .route("/webhooks/github/{id}", post(admin::github))
         .route("/webhooks/gitlab/{id}", post(admin::gitlab));

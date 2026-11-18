@@ -293,9 +293,11 @@ AES-256-GCM under `JD_MASTER_KEY`. Saving re-releases the current image with the
 
 ## Domains and HTTPS
 
-Every public service answers on its generated hostname. Add custom domains under **Domains**: create
-an `A` (or `CNAME`) record pointing at the server first. With HTTPS on, Traefik obtains a certificate
-the first time the hostname is requested.
+Every public service answers on its generated hostname. Add custom domains under **Domains**: each one
+shows the DNS record to set (a `CNAME` onto the generated hostname for subdomains, an `A` record for an
+apex) and checks every 15 seconds until it resolves to this server, then shows **Connected**. Settings
+does the same for the base domain's wildcard record. With HTTPS on, Traefik obtains a certificate the
+first time the hostname is requested.
 
 ---
 
@@ -494,6 +496,7 @@ authenticate by signature instead.
 | `GET` | `/services/{id}/deployments` | Last 50 deployments |
 | `GET` `PUT` | `/services/{id}/env` | `[{key, value}]`, replaced as a whole |
 | `POST` `DELETE` | `/services/{id}/domains`, `/services/{id}/domains/{domain_id}` | Custom domains |
+| `GET` | `/dns-check?host=app.example.com` | Whether a hostname (or `*.wildcard`) resolves to this server |
 | `GET` | `/services/{id}/logs` | Runtime output (server-sent events) |
 | `GET` | `/services/{id}/metrics?minutes=60` | Samples |
 | `GET` | `/services/{id}/terminal` | WebSocket: binary frames are terminal bytes, a text frame `{cols, rows}` resizes |

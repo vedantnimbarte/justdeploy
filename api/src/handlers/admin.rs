@@ -5,19 +5,20 @@ use crate::{
     backups::{self, DestinationConfig, Schedule},
     engines,
     error::{bad_request, Result},
-    services,
+    names, services,
     state::SharedState,
     templates::{self, DeployTemplate, Template},
     webhooks,
 };
 use axum::{
     body::Bytes,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     Json,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::{net::IpAddr, time::Duration};
 use uuid::Uuid;
 
 // ---------------------------------------------------------------- settings
@@ -70,6 +71,73 @@ pub async fn put_settings(
         }
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------------------------------------------------------------- dns check
+
+#[derive(Deserialize)]
+pub struct DnsQuery {
+    host: String,
+}
+
+#[derive(Serialize)]
+pub struct DnsCheck {
+    /// This server's addresses, IPv4 and public ones first.
+    expected: Vec<IpAddr>,
+    found: Vec<IpAddr>,
+    /// "connected", "missing" (no record), "elsewhere" (another server) or
+    /// "unknown" (this server's own address could not be worked out).
+    status: &'static str,
+}
+
+/// Whether a hostname resolves to this server. A wildcard (`*.example.com`) is
+/// checked through a made-up label under it.
+pub async fn dns_check(
+    _: Admin,
+    State(state): State<SharedState>,
+    Query(q): Query<DnsQuery>,
+) -> Result<Json<DnsCheck>> {
+    let host = q.host.trim().to_lowercase();
+    let wildcard = host.strip_prefix("*.");
+    let probe = wildcard.map_or(host.clone(), |base| format!("jd-dns-check.{base}"));
+    names::validate_hostname(&probe)?;
+
+    // This server is wherever the dashboard URL points and, for custom domains,
+    // wherever the generated hostnames already resolve.
+    let url = &state.config.public_url;
+    let authority = url.split("://").last().unwrap_or(url);
+    let mut expected = resolve(authority.split('/').next().unwrap_or_default()).await;
+    let base = services::base_domain(&state).await?;
+    if wildcard.is_none() && base != "localhost" {
+        expected.extend(resolve(&format!("jd-dns-check.{base}")).await);
+    }
+    expected.retain(|ip| !ip.is_loopback());
+    expected.sort_by_key(|ip| (!ip.is_ipv4(), matches!(ip, IpAddr::V4(v4) if v4.is_private()), *ip));
+    expected.dedup();
+
+    let found = resolve(&probe).await;
+    let status = if found.is_empty() {
+        "missing"
+    } else if expected.is_empty() {
+        "unknown"
+    } else if found.iter().any(|ip| expected.contains(ip)) {
+        "connected"
+    } else {
+        "elsewhere"
+    };
+    Ok(Json(DnsCheck { expected, found, status }))
+}
+
+/// Addresses for `host` or `host:port`; empty when it does not resolve in 5s.
+async fn resolve(host: &str) -> Vec<IpAddr> {
+    let has_port = host
+        .rsplit_once(':')
+        .is_some_and(|(_, port)| port.parse::<u16>().is_ok());
+    let target = if has_port { host.to_string() } else { format!("{host}:80") };
+    match tokio::time::timeout(Duration::from_secs(5), tokio::net::lookup_host(target)).await {
+        Ok(Ok(addrs)) => addrs.map(|a| a.ip()).collect(),
+        _ => vec![],
+    }
 }
 
 #[derive(Deserialize)]
@@ -247,4 +315,18 @@ pub async fn gitlab(
         other => format!("ignored: {other} events are not used"),
     };
     Ok(Json(json!({ "message": message })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve;
+
+    #[tokio::test]
+    async fn resolves_hosts_with_or_without_a_port() {
+        let has = |ips: Vec<std::net::IpAddr>, ip: &str| ips.iter().any(|a| a.to_string() == ip);
+        assert!(has(resolve("127.0.0.1").await, "127.0.0.1"));
+        assert!(has(resolve("127.0.0.1:8080").await, "127.0.0.1"));
+        assert!(has(resolve("[::1]").await, "::1"));
+        assert!(resolve("nothing-here.invalid").await.is_empty());
+    }
 }

@@ -137,6 +137,12 @@ export interface Settings {
   engines: { id: string; label: string; image: string }[];
 }
 
+export interface DnsCheck {
+  expected: string[];
+  found: string[];
+  status: "connected" | "missing" | "elsewhere" | "unknown";
+}
+
 export interface Destination {
   id: string;
   name: string;
