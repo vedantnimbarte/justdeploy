@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO users (id, email, password_hash, role)\n         SELECT $1, $2, $3, 'owner' WHERE NOT EXISTS (SELECT 1 FROM users)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8f0992641ddf7867e99b29dbf14da7d79254da3f0c11d501e4190b9aee2562b9"
+}

@@ -1,5 +1,5 @@
 use crate::{
-    auth::Admin,
+    auth::{Admin, Can, Member, Role, Viewer},
     docker::{self, LABEL_KIND, LABEL_PROJECT, LABEL_SERVICE},
     error::{bad_request, Result},
     models::{Deployment, Domain, Project, Run, Service, Volume},
@@ -27,6 +27,16 @@ pub struct ServiceView {
     connection_url: Option<String>,
     has_git_token: bool,
     latest_deployment: Option<Deployment>,
+}
+
+impl ServiceView {
+    /// Drops what a viewer may not see.
+    fn for_role(mut self, role: Role) -> Self {
+        if role < Role::Member {
+            self.connection_url = None;
+        }
+        self
+    }
 }
 
 #[derive(Serialize)]
@@ -119,6 +129,7 @@ async fn project_view(
     project: Project,
     containers: &[ContainerSummary],
     base: &str,
+    role: Role,
 ) -> Result<ProjectView> {
     let services = services::list_services(&state.db, project.id).await?;
     let views = futures::future::try_join_all(
@@ -129,19 +140,22 @@ async fn project_view(
     .await?;
     Ok(ProjectView {
         project,
-        services: views,
+        services: views.into_iter().map(|v| v.for_role(role)).collect(),
     })
 }
 
 /// One Docker listing and one settings read for the whole page.
-pub async fn list(_: Admin, State(state): State<SharedState>) -> Result<Json<Vec<ProjectView>>> {
+pub async fn list(
+    Can(user): Viewer,
+    State(state): State<SharedState>,
+) -> Result<Json<Vec<ProjectView>>> {
     let containers = docker::list(&state.docker, &[]).await?;
     let base = services::base_domain(&state).await?;
     let projects = services::list_projects(&state.db).await?;
     let views = futures::future::try_join_all(
         projects
             .into_iter()
-            .map(|project| project_view(&state, project, &containers, &base)),
+            .map(|project| project_view(&state, project, &containers, &base, user.role)),
     )
     .await?;
     Ok(Json(views))
@@ -153,7 +167,7 @@ pub struct NewProject {
 }
 
 pub async fn create(
-    _: Admin,
+    _: Member,
     State(state): State<SharedState>,
     Json(body): Json<NewProject>,
 ) -> Result<(StatusCode, Json<Project>)> {
@@ -162,7 +176,7 @@ pub async fn create(
 }
 
 pub async fn get(
-    _: Admin,
+    Can(user): Viewer,
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<ProjectView>> {
@@ -171,7 +185,7 @@ pub async fn get(
     let containers = docker::list(&state.docker, &[(LABEL_PROJECT, &pid)]).await?;
     let base = services::base_domain(&state).await?;
     Ok(Json(
-        project_view(&state, project, &containers, &base).await?,
+        project_view(&state, project, &containers, &base, user.role).await?,
     ))
 }
 
@@ -187,7 +201,7 @@ pub async fn delete(
 // ---------------------------------------------------------------- services
 
 pub async fn create_service(
-    _: Admin,
+    _: Member,
     State(state): State<SharedState>,
     Path(project_id): Path<Uuid>,
     Json(body): Json<NewService>,
@@ -215,7 +229,7 @@ struct Webhooks {
 }
 
 pub async fn get_service(
-    _: Admin,
+    Can(user): Viewer,
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<ServiceDetail>> {
@@ -236,18 +250,24 @@ pub async fn get_service(
         webhooks: Webhooks {
             github: webhook("github"),
             gitlab: webhook("gitlab"),
-            secret: service.webhook_secret.clone(),
+            secret: if user.role >= Role::Member {
+                service.webhook_secret.clone()
+            } else {
+                String::new()
+            },
         },
         volumes: services::volumes(&state.db, id).await?,
         domains: services::domains(&state.db, id).await?,
         generated_host,
-        view: view_service(&state, &project, service, &containers, &base).await?,
+        view: view_service(&state, &project, service, &containers, &base)
+            .await?
+            .for_role(user.role),
         project,
     }))
 }
 
 pub async fn update_service(
-    _: Admin,
+    _: Member,
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
     Json(body): Json<ServiceUpdate>,
@@ -272,7 +292,7 @@ pub struct Action {
 
 /// deploy (fresh build or pull) | restart (same image) | stop | start
 pub async fn service_action(
-    _: Admin,
+    _: Member,
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
     Json(body): Json<Action>,
@@ -309,7 +329,7 @@ pub async fn service_action(
 // ---------------------------------------------------------------- runs
 
 pub async fn list_runs(
-    _: Admin,
+    _: Viewer,
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<runs::Runs>> {
@@ -324,7 +344,7 @@ pub struct NewRun {
 }
 
 pub async fn start_run(
-    _: Admin,
+    _: Member,
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
     Json(body): Json<NewRun>,
@@ -337,7 +357,7 @@ pub async fn start_run(
 // ---------------------------------------------------------------- deployments
 
 pub async fn deployments(
-    _: Admin,
+    _: Viewer,
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Vec<Deployment>>> {
@@ -345,7 +365,7 @@ pub async fn deployments(
 }
 
 pub async fn deployment(
-    _: Admin,
+    _: Viewer,
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Deployment>> {
@@ -353,7 +373,7 @@ pub async fn deployment(
 }
 
 pub async fn rollback(
-    _: Admin,
+    _: Member,
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
 ) -> Result<(StatusCode, Json<Deployment>)> {
@@ -372,7 +392,7 @@ pub struct EnvVar {
 }
 
 pub async fn get_env(
-    _: Admin,
+    _: Member,
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Vec<EnvVar>>> {
@@ -392,7 +412,7 @@ pub struct EnvSaved {
 
 /// Replaces all variables and re-releases the current image when they changed.
 pub async fn put_env(
-    _: Admin,
+    _: Member,
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
     Json(vars): Json<Vec<EnvVar>>,
@@ -413,13 +433,55 @@ pub async fn put_env(
     Ok(Json(EnvSaved { redeploying }))
 }
 
+/// The project's shared variables. Members only: they are secrets.
+pub async fn get_shared_env(
+    _: Member,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<EnvVar>>> {
+    services::get_project(&state.db, id).await?;
+    let vars = services::shared_env(&state, id).await?;
+    Ok(Json(
+        vars.into_iter()
+            .map(|(key, value)| EnvVar { key, value })
+            .collect(),
+    ))
+}
+
+/// Replaces the shared variables and re-releases every running service in the
+/// project when they changed.
+pub async fn put_shared_env(
+    _: Member,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+    Json(vars): Json<Vec<EnvVar>>,
+) -> Result<Json<EnvSaved>> {
+    services::get_project(&state.db, id).await?;
+    let mut map = BTreeMap::new();
+    for var in vars {
+        let key = var.key.trim().to_string();
+        if map.insert(key.clone(), var.value).is_some() {
+            return Err(bad_request(format!("{key} appears twice")));
+        }
+    }
+    let mut redeploying = false;
+    if services::replace_shared_env(&state, id, map).await? {
+        for service in services::list_services(&state.db, id).await? {
+            redeploying |= services::rerelease(&state, &service, "env")
+                .await?
+                .is_some();
+        }
+    }
+    Ok(Json(EnvSaved { redeploying }))
+}
+
 #[derive(Deserialize)]
 pub struct NewDomain {
     hostname: String,
 }
 
 pub async fn add_domain(
-    _: Admin,
+    _: Member,
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
     Json(body): Json<NewDomain>,
@@ -431,7 +493,7 @@ pub async fn add_domain(
 }
 
 pub async fn remove_domain(
-    _: Admin,
+    _: Member,
     State(state): State<SharedState>,
     Path((id, domain_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode> {

@@ -56,7 +56,9 @@ pub async fn start(
         None => None,
     }
     .ok_or_else(|| bad_request("deploy the service once before running it"))?;
-    let command = command.map(|c| c.trim().to_string()).filter(|c| !c.is_empty());
+    let command = command
+        .map(|c| c.trim().to_string())
+        .filter(|c| !c.is_empty());
 
     let run = sqlx::query_as!(
         Run,
@@ -68,7 +70,14 @@ pub async fn start(
     )
     .fetch_one(&state.db)
     .await?;
-    tokio::spawn(execute(state.clone(), service.clone(), run.id, image, command, trigger));
+    tokio::spawn(execute(
+        state.clone(),
+        service.clone(),
+        run.id,
+        image,
+        command,
+        trigger,
+    ));
     Ok(run)
 }
 
@@ -85,7 +94,7 @@ async fn execute(
         let project = services::get_project(&state.db, service.project_id).await?;
         let network = names::project_network(project.id);
         docker::ensure_network(&state.docker, &network).await?;
-        let env = services::env(&state, service.id).await?;
+        let env = services::runtime_env(&state, &service).await?;
         let body = spec::one_off(&image, command.as_deref(), &env, &service, &network);
         let name = format!("jd-run-{}", &run_id.simple().to_string()[..12]);
         let code = docker::run_to_completion(&state.docker, &name, body, RUN_TIMEOUT, |line| {
@@ -102,7 +111,11 @@ async fn execute(
     let text = Vec::from(output).join("\n");
     let (status, code, error) = match &outcome {
         Ok((_, 0)) => ("succeeded", Some(0), None),
-        Ok((_, code)) => ("failed", Some(*code), Some(format!("exited with code {code}"))),
+        Ok((_, code)) => (
+            "failed",
+            Some(*code),
+            Some(format!("exited with code {code}")),
+        ),
         Err(e) => ("failed", None, Some(format!("{e:#}"))),
     };
     if let Err(e) = sqlx::query!(
@@ -159,7 +172,11 @@ pub async fn schedule_due(state: SharedState) -> Result<()> {
         // Counting from the last run (or the last settings change) means a
         // restart that misses a time runs it once on the way back, not again and again.
         let since = row.last_run.unwrap_or(row.updated_at).max(row.updated_at);
-        if schedule.after(&since).next().is_some_and(|next| next <= now) {
+        if schedule
+            .after(&since)
+            .next()
+            .is_some_and(|next| next <= now)
+        {
             let service = services::get_service(&state.db, row.id).await?;
             start(&state, &service, None, "schedule").await?;
         }

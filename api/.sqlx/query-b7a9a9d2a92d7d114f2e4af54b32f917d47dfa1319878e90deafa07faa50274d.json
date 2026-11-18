@@ -1,38 +1,40 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT email, password_hash FROM admin",
+  "query": "SELECT key, value_enc FROM shared_env_vars WHERE project_id = $1 ORDER BY key",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "email",
+        "name": "key",
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "admin",
-            "name": "email"
+            "table": "shared_env_vars",
+            "name": "key"
           }
         }
       },
       {
         "ordinal": 1,
-        "name": "password_hash",
+        "name": "value_enc",
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "admin",
-            "name": "password_hash"
+            "table": "shared_env_vars",
+            "name": "value_enc"
           }
         }
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Uuid"
+      ]
     },
     "nullable": [
       false,
       false
     ]
   },
-  "hash": "23d598efdfe445090f14c85a979b4c19a869719a04ee3fb3189b32274163b145"
+  "hash": "b7a9a9d2a92d7d114f2e4af54b32f917d47dfa1319878e90deafa07faa50274d"
 }

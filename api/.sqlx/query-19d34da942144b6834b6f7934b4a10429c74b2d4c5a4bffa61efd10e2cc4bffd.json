@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.name || '/' || s.name AS \"n!\"\n                   FROM services s JOIN projects p ON p.id = s.project_id\n                   WHERE s.id IN (SELECT service_id FROM deployments WHERE id = $1\n                                  UNION SELECT service_id FROM backups WHERE id = $1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "n!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "19d34da942144b6834b6f7934b4a10429c74b2d4c5a4bffa61efd10e2cc4bffd"
+}

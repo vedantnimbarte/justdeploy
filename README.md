@@ -20,8 +20,8 @@ Kubernetes.
   and warnings when something needs attention.
 - **Templates** for 18 stacks, from a static site to FastAPI + PostgreSQL.
 
-justdeploy is MIT licensed and has a single admin account: it is meant for you and your team on your
-own server, not for hosting strangers.
+justdeploy is MIT licensed and is meant for you and your team on your own server, with roles for
+who may do what, not for hosting strangers.
 
 ---
 
@@ -40,6 +40,7 @@ own server, not for hosting strangers.
 - [Backups and restore](#backups-and-restore)
 - [Runs and cron jobs](#runs-and-cron-jobs)
 - [Logs, metrics and the terminal](#logs-metrics-and-the-terminal)
+- [Team, roles and access](#team-roles-and-access)
 - [Notifications](#notifications)
 - [System overview](#system-overview)
 - [Templates](#templates)
@@ -99,7 +100,7 @@ curl -fsSL https://raw.githubusercontent.com/vedantnimbarte/justdeploy/main/depl
 
 The script installs into `/opt/justdeploy`: it downloads the compose files, writes a `.env` with a
 freshly generated master key and database password, pulls the images and starts everything. Then open
-`http://<server-ip>:8080` and create the admin account.
+`http://<server-ip>:8080` and create the owner account. Invite the rest of your team under **Team**.
 
 > The images are published to GitHub Container Registry when a version is tagged (see
 > [Releasing](#releasing)). Until the first release exists, build them on the server instead:
@@ -155,7 +156,8 @@ and redeploy your public services so they pick up the HTTPS routes.
 cd /opt/justdeploy && docker compose exec justdeploy justdeploy reset-password
 ```
 
-prints a new random password and signs out every session.
+prints a new random password for the first owner, turns off their two-factor sign-in and signs their
+sessions out. Add an email (`reset-password sam@example.com`) to reset someone else.
 
 ---
 
@@ -274,7 +276,23 @@ for a different service. Deploys of the same service always run one at a time, i
 
 ## Push to deploy and pull request previews
 
-Each Git service has its own webhook URL and secret, shown under **Settings → Automatic deploys**.
+**With the GitHub App (recommended for GitHub).** Under **Settings → GitHub**, *Create GitHub App*
+sends you to GitHub with everything filled in; confirm, then install the app on the accounts and
+repositories you deploy. From then on:
+
+- **Add a service** offers a repository picker, and private repositories clone without a token.
+- Every push to a service's branch deploys it, and pull requests build previews when they are on for
+  that service; no per-service webhook is needed. This applies to existing services built from those
+  repositories too.
+- Each deploy marks its commit with a status (*justdeploy/web*, or *justdeploy/web preview*) that links
+  to the preview or the service.
+
+GitHub has to reach this server, so `JD_PUBLIC_URL` must be its public address. Disconnecting the app
+in Settings forgets it here; delete it on GitHub as well if you no longer need it.
+
+**Per-service webhooks** work for GitHub and GitLab without the app. Each Git service has its own
+webhook URL and secret, shown under **Settings → Automatic deploys**. A commit delivered by both the
+app and a webhook deploys once.
 
 **GitHub:** in the repository's *Settings → Webhooks → Add webhook*, use the GitHub URL, content type
 `application/json`, the secret, and the *push* event (add *pull requests* for previews).
@@ -300,6 +318,19 @@ AES-256-GCM under `JD_MASTER_KEY`. Saving re-releases the current image with the
 **Deploy latest** when a build step reads them. Names starting with `JD_` are reserved.
 
 `PORT` is set to the service's port unless you set it yourself.
+
+**Shared variables.** On a project's page, variables every service in the project gets, at build and run
+time. A service's own variable with the same name wins. Saving redeploys the project's running services.
+
+**References.** A value can point at another service in the project with `${{service.KEY}}`, filled in
+each time a container starts or a build runs:
+
+- `${{db.URL}}` is a database's connection URL;
+- `${{api.HOST}}` and `${{api.PORT}}` are another service's address on the project network;
+- `${{api.NAME}}` is any of its variables, shared ones included.
+
+A reference to a service or variable that doesn't exist fails the deploy with a message naming it.
+Changing the referenced service doesn't redeploy the ones that point at it; redeploy them to pick it up.
 
 ---
 
@@ -390,6 +421,31 @@ host port or have previews.
   Samples are taken every 30 seconds and kept for 24 hours.
 - **Terminal** opens a shell (`bash` if present, otherwise `sh`) inside the running container. Each
   session is written to the audit log.
+
+---
+
+## Team, roles and access
+
+The first account is the **owner**. Under **Team**, owners invite people: an invite is a one-time link
+for one email address, valid for 7 days, that you send however you like (there is no email sending).
+Each person has one role, everywhere:
+
+| Role | Can |
+|---|---|
+| Viewer | See projects, services, deploys, logs, metrics and runs. No secrets: variables, connection URLs and webhook secrets are hidden. |
+| Member | Everything a viewer can, plus deploy, change services, variables and domains, run commands and open terminals. |
+| Admin | Everything a member can, plus delete projects and services, restore backups, and change settings, GitHub and notifications. |
+| Owner | Everything an admin can, plus invite people, change their roles, turn off their two-factor sign-in and remove them. There is always at least one owner. |
+
+**Account.** Each person changes their own password, turns on **two-factor sign-in** (any TOTP app:
+scan the QR code or type the key), and creates **API tokens**. A token is sent as
+`Authorization: Bearer jd_…`, acts with its person's role, is shown once and stored hashed, and shows
+when it was last used. A lost phone: an owner turns two-factor off for that person under Team, or
+`reset-password <email>` does it from the server.
+
+**Activity.** Admins see every change made through the dashboard or the API under Team: who did what
+to which service, project or person, plus sign-ins, terminal sessions and what justdeploy itself did
+(finishing a deletion or a restore).
 
 ---
 
@@ -519,19 +575,31 @@ The control plane reads its configuration from the environment (`.env` next to t
 
 ## HTTP API
 
-The dashboard uses a JSON API under `/api/v1`, authenticated with the session cookie. Webhooks
-authenticate by signature instead.
+The dashboard uses a JSON API under `/api/v1`, authenticated with the session cookie; scripts send an
+API token as `Authorization: Bearer jd_…` instead. Each call needs a role (see
+[Team, roles and access](#team-roles-and-access)); a missing one answers 403 naming the role. Webhooks
+authenticate by signature.
 
 | Method | Path | |
 |---|---|---|
 | `GET` | `/health` | Database and Docker reachability |
 | `GET` | `/overview?minutes=60` | Server, apps-combined series, activity, Docker disk usage, warnings |
 | `GET` | `/auth/status` | Whether setup is needed and whether signed in |
-| `POST` | `/auth/setup` · `/auth/login` · `/auth/logout` | `{email, password}` |
+| `POST` | `/auth/setup` · `/auth/login` · `/auth/logout` | `{email, password, code?}`; 401 from login means the account needs its code |
+| `GET` | `/auth/me` | `{id, email, role, two_factor}` |
 | `PUT` | `/auth/password` | `{current, new}` |
+| `POST` `DELETE` | `/auth/two-factor` | Start setup: `{secret, otpauth_url, qr_svg}` · turn off `{password}` |
+| `POST` | `/auth/two-factor/confirm` | `{code}` |
+| `GET` `POST` `DELETE` | `/auth/tokens`, `/auth/tokens/{id}` | Your API tokens · create `{name}` returns the value once |
+| `GET` `POST` | `/auth/invites/{token}` | What an invite is for · accept it `{password}` |
+| `GET` | `/users` | Everyone, with role and two-factor state |
+| `PATCH` `DELETE` | `/users/{id}` | Owner: `{role?, reset_two_factor?}` · remove |
+| `GET` `POST` `DELETE` | `/invites`, `/invites/{id}` | Owner: pending invites · create `{email, role}` returns the link once · revoke |
+| `GET` | `/activity?before=id` | Admin: the 100 newest entries before `before` |
 | `GET` `POST` | `/projects` | List (with services and status) · create `{name}` |
 | `GET` `DELETE` | `/projects/{id}` | |
 | `POST` | `/projects/{id}/services` | Create a service and deploy it |
+| `GET` `PUT` | `/projects/{id}/env` | Shared variables, `[{key, value}]`, replaced as a whole |
 | `GET` `PATCH` `DELETE` | `/services/{id}` | Detail · update settings (redeploys) · delete |
 | `POST` | `/services/{id}/actions` | `{action: deploy | restart | stop | start}` |
 | `GET` | `/services/{id}/deployments` | Last 50 deployments |
@@ -551,7 +619,11 @@ authenticate by signature instead.
 | `GET` `POST` | `/templates` · `/templates/{id}/deploy` | `{project_name}` or `{project_id}` |
 | `GET` `PUT` | `/settings` | `{base_domain}` |
 | `GET` `POST` `DELETE` | `/notification-channels`, `/notification-channels/{id}` | `{name, kind: slack \| discord \| webhook, url, notify_success}`; sends a test first |
-| `POST` | `/webhooks/github/{service_id}` · `/webhooks/gitlab/{service_id}` | |
+| `GET` | `/github` | The GitHub App and the accounts it's installed on |
+| `POST` | `/github/manifest` | Admin: `{org?}` returns the form that creates the app on GitHub |
+| `POST` `DELETE` | `/github/app` | Admin: finish creation `{code, state}` · forget the app |
+| `GET` | `/github/repos` | Member: repositories the app can deploy |
+| `POST` | `/webhooks/github/{service_id}` · `/webhooks/gitlab/{service_id}` · `/webhooks/github-app` | |
 
 ---
 
@@ -560,15 +632,20 @@ authenticate by signature instead.
 - **The Docker socket is root on the host.** justdeploy needs it to run containers, so anyone who can
   sign in to the dashboard (or run code in the control plane) controls the server. Use a strong
   password, keep the dashboard behind HTTPS, and do not expose port 8080 once a dashboard domain is set.
-- **One admin account.** There is no signup. Login attempts are limited to 10 per 15 minutes per email
-  address. Sessions are random tokens stored hashed, valid for 30 days, and can be ended by signing out
-  or by `reset-password`.
+- **Accounts come from invites.** There is no signup. Login attempts (and one-time codes) are limited to
+  10 per 15 minutes per email address. Sessions, API tokens and invite links are random tokens stored
+  hashed; sessions last 30 days and end on sign-out, `reset-password` or removing the person.
+  Two-factor secrets and the GitHub App's key are encrypted with `JD_MASTER_KEY`.
+- **Roles limit the dashboard and API, not the server.** A member can open a terminal and run commands
+  in containers, and builds see the Docker socket, so give the member role only to people you'd trust
+  with the server.
 - **Secrets are encrypted at rest** (AES-256-GCM): variables, git tokens, database credentials and
   backup credentials. The key is `JD_MASTER_KEY` in `.env`, which the installer creates with
   owner-only permissions.
 - **Apps are isolated by network.** Each project has its own Docker network; only public services join
   the proxy network. justdeploy does not sandbox untrusted code: deploy only code you trust.
-- **Webhooks** are verified with HMAC-SHA256 (GitHub) or a constant-time token comparison (GitLab).
+- **Webhooks** are verified with HMAC-SHA256 (GitHub, and the GitHub App with its own secret) or a
+  constant-time token comparison (GitLab).
 - Builds see the Docker socket (they build with the host's BuildKit), so a build can do anything Docker
   can. That is fine for your own repositories and the reason justdeploy is single-tenant.
 
@@ -651,7 +728,7 @@ docker compose up -d justdeploy      # dashboard at http://localhost:8080
 
 | Path | What |
 |---|---|
-| `api/src/handlers/` | HTTP: auth, projects and services, streams (SSE logs, metrics, terminal), settings, backups, templates, webhooks |
+| `api/src/handlers/` | HTTP: sign-in and accounts, team and activity (with the middleware that records it), projects and services, streams (SSE logs, metrics, terminal), settings, GitHub, backups, templates, webhooks |
 | `api/src/services.rs` | Projects, services, variables, domains, deployments |
 | `api/src/queue/` | Job queue, the deploy pipeline (build, release, removal), maintenance loops and reconciler |
 | `api/src/docker/` | Docker helpers, and `spec.rs`: the pure builder of container definitions and Traefik labels |
@@ -661,7 +738,8 @@ docker compose up -d justdeploy      # dashboard at http://localhost:8080
 | `api/src/webhooks.rs` | Signature checks, push deploys, previews |
 | `api/src/runs.rs` | One-off and scheduled runs of a service's image |
 | `api/src/notify.rs` | Notification channels and delivery to Slack, Discord or a webhook |
-| `api/src/auth.rs`, `crypto.rs` | Admin account, sessions, rate limit; AES-GCM secrets |
+| `api/src/auth.rs`, `crypto.rs` | People and roles, sessions, API tokens, invites, two-factor, rate limit; AES-GCM secrets |
+| `api/src/github.rs` | The GitHub App: manifest flow, installation tokens, repositories, app webhooks, commit statuses |
 | `api/migrations/` | Schema |
 | `builder/` | The builder image: `build.sh` (clone, Dockerfile or Railpack) and `healthcheck.sh` |
 | `web/src/` | The dashboard: `ui.tsx` (design system components), `api.ts` (typed client), `pages/` |
@@ -703,7 +781,8 @@ Dockerfile               Production image (API + dashboard)
 ## Known limits
 
 - **One server.** justdeploy manages the Docker host it runs on. Remote hosts are not supported yet.
-- **One admin.** No additional users or roles.
+- **Roles are install-wide**: there is no per-project access yet.
+- **No recovery codes** for two-factor sign-in; an owner or `reset-password` turns it off instead.
 - **Run output** is saved when a run finishes, not streamed while it runs.
 - **Previews share the production database** (they reuse the service's variables), and are GitHub only;
   GitLab merge requests do not get previews.

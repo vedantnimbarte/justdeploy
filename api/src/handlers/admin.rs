@@ -1,11 +1,11 @@
 //! Settings, templates, backups and the webhook endpoints.
 
 use crate::{
-    auth::{self, Admin},
+    auth::{Admin, Member, Viewer},
     backups::{self, DestinationConfig, Schedule},
     engines,
     error::{bad_request, Result},
-    names, notify, services,
+    github, names, notify, services,
     state::SharedState,
     templates::{self, DeployTemplate, Template},
     webhooks,
@@ -33,7 +33,7 @@ pub struct Settings {
     engines: Vec<Value>,
 }
 
-pub async fn get_settings(_: Admin, State(state): State<SharedState>) -> Result<Json<Settings>> {
+pub async fn get_settings(_: Viewer, State(state): State<SharedState>) -> Result<Json<Settings>> {
     Ok(Json(Settings {
         base_domain: services::base_domain(&state).await?,
         tls: state.config.tls(),
@@ -73,10 +73,68 @@ pub async fn put_settings(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// ---------------------------------------------------------------- GitHub App
+
+pub async fn github_overview(
+    _: Viewer,
+    State(state): State<SharedState>,
+) -> Result<Json<github::Overview>> {
+    Ok(Json(github::overview(&state).await?))
+}
+
+#[derive(Deserialize)]
+pub struct ManifestRequest {
+    /// Create the app under this organization instead of a personal account.
+    org: Option<String>,
+}
+
+pub async fn github_manifest(
+    _: Admin,
+    State(state): State<SharedState>,
+    Json(body): Json<ManifestRequest>,
+) -> Result<Json<github::ManifestForm>> {
+    Ok(Json(github::manifest(&state, body.org.as_deref()).await?))
+}
+
+#[derive(Deserialize)]
+pub struct Conversion {
+    code: String,
+    state: String,
+}
+
+pub async fn github_create(
+    _: Admin,
+    State(state): State<SharedState>,
+    Json(body): Json<Conversion>,
+) -> Result<StatusCode> {
+    github::finish_creation(&state, &body.code, &body.state).await?;
+    Ok(StatusCode::CREATED)
+}
+
+pub async fn github_forget(_: Admin, State(state): State<SharedState>) -> Result<StatusCode> {
+    github::forget(&state).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn github_repos(
+    _: Member,
+    State(state): State<SharedState>,
+) -> Result<Json<Vec<github::Repo>>> {
+    Ok(Json(github::repos(&state).await?))
+}
+
+pub async fn github_app_webhook(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<Value>> {
+    Ok(Json(github::webhook(&state, &headers, &body).await?))
+}
+
 // ---------------------------------------------------------------- notifications
 
 pub async fn list_channels(
-    _: Admin,
+    _: Viewer,
     State(state): State<SharedState>,
 ) -> Result<Json<Vec<notify::Channel>>> {
     Ok(Json(notify::list(&state).await?))
@@ -120,7 +178,7 @@ pub struct DnsCheck {
 /// Whether a hostname resolves to this server. A wildcard (`*.example.com`) is
 /// checked through a made-up label under it.
 pub async fn dns_check(
-    _: Admin,
+    _: Viewer,
     State(state): State<SharedState>,
     Query(q): Query<DnsQuery>,
 ) -> Result<Json<DnsCheck>> {
@@ -139,7 +197,13 @@ pub async fn dns_check(
         expected.extend(resolve(&format!("jd-dns-check.{base}")).await);
     }
     expected.retain(|ip| !ip.is_loopback());
-    expected.sort_by_key(|ip| (!ip.is_ipv4(), matches!(ip, IpAddr::V4(v4) if v4.is_private()), *ip));
+    expected.sort_by_key(|ip| {
+        (
+            !ip.is_ipv4(),
+            matches!(ip, IpAddr::V4(v4) if v4.is_private()),
+            *ip,
+        )
+    });
     expected.dedup();
 
     let found = resolve(&probe).await;
@@ -152,7 +216,11 @@ pub async fn dns_check(
     } else {
         "elsewhere"
     };
-    Ok(Json(DnsCheck { expected, found, status }))
+    Ok(Json(DnsCheck {
+        expected,
+        found,
+        status,
+    }))
 }
 
 /// Addresses for `host` or `host:port`; empty when it does not resolve in 5s.
@@ -160,40 +228,25 @@ async fn resolve(host: &str) -> Vec<IpAddr> {
     let has_port = host
         .rsplit_once(':')
         .is_some_and(|(_, port)| port.parse::<u16>().is_ok());
-    let target = if has_port { host.to_string() } else { format!("{host}:80") };
+    let target = if has_port {
+        host.to_string()
+    } else {
+        format!("{host}:80")
+    };
     match tokio::time::timeout(Duration::from_secs(5), tokio::net::lookup_host(target)).await {
         Ok(Ok(addrs)) => addrs.map(|a| a.ip()).collect(),
         _ => vec![],
     }
 }
 
-#[derive(Deserialize)]
-pub struct PasswordChange {
-    current: String,
-    new: String,
-}
-
-pub async fn change_password(
-    _: Admin,
-    State(state): State<SharedState>,
-    Json(body): Json<PasswordChange>,
-) -> Result<StatusCode> {
-    if !auth::check_password(&state, &body.current).await? {
-        return Err(bad_request("the current password is wrong"));
-    }
-    auth::validate_password(&body.new)?;
-    auth::set_password(&state.db, &body.new).await?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
 // ---------------------------------------------------------------- templates
 
-pub async fn list_templates(_: Admin) -> Json<Vec<Template>> {
+pub async fn list_templates(_: Viewer) -> Json<Vec<Template>> {
     Json(templates::catalog())
 }
 
 pub async fn deploy_template(
-    _: Admin,
+    _: Member,
     State(state): State<SharedState>,
     Path(id): Path<String>,
     Json(body): Json<DeployTemplate>,
@@ -208,7 +261,7 @@ pub async fn deploy_template(
 // ---------------------------------------------------------------- backups
 
 pub async fn list_destinations(
-    _: Admin,
+    _: Viewer,
     State(state): State<SharedState>,
 ) -> Result<Json<Vec<backups::Destination>>> {
     Ok(Json(backups::list_destinations(&state).await?))
@@ -240,7 +293,7 @@ pub async fn delete_destination(
 }
 
 pub async fn list_backups(
-    _: Admin,
+    _: Viewer,
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Vec<backups::Backup>>> {
@@ -253,7 +306,7 @@ pub struct BackupNow {
 }
 
 pub async fn backup_now(
-    _: Admin,
+    _: Member,
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
     Json(body): Json<BackupNow>,
@@ -273,7 +326,7 @@ pub async fn restore(
 }
 
 pub async fn get_schedule(
-    _: Admin,
+    _: Viewer,
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Option<Schedule>>> {
@@ -281,7 +334,7 @@ pub async fn get_schedule(
 }
 
 pub async fn put_schedule(
-    _: Admin,
+    _: Member,
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
     Json(body): Json<Option<Schedule>>,

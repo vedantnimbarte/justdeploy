@@ -1,7 +1,7 @@
 //! Live views: deployment logs and runtime logs (SSE), metrics, and the web terminal.
 
 use crate::{
-    auth::Admin,
+    auth::{Can, Member, Viewer},
     docker::{self, LABEL_KIND, LABEL_SERVICE},
     error::{bad_request, Result},
     metrics, services,
@@ -33,7 +33,7 @@ type EventStream = Response;
 /// Deployment log, polled from the database. Each event carries the id of its last
 /// line, so a reconnecting EventSource resumes where it left off.
 pub async fn deployment_logs(
-    _: Admin,
+    _: Viewer,
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
     headers: axum::http::HeaderMap,
@@ -110,7 +110,7 @@ pub struct LogQuery {
 
 /// Runtime output of the live container, followed.
 pub async fn runtime_logs(
-    _: Admin,
+    _: Viewer,
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
     Query(query): Query<LogQuery>,
@@ -164,7 +164,7 @@ pub struct MetricsQuery {
 }
 
 pub async fn metrics(
-    _: Admin,
+    _: Viewer,
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
     Query(query): Query<MetricsQuery>,
@@ -183,7 +183,7 @@ struct Resize {
 /// A shell in the live container. Binary frames carry terminal bytes both ways;
 /// a text frame `{"cols":..,"rows":..}` resizes.
 pub async fn terminal(
-    _: Admin,
+    Can(user): Member,
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
     ws: WebSocketUpgrade,
@@ -193,11 +193,26 @@ pub async fn terminal(
         .ok_or_else(|| bad_request("the service has no running container"))?;
     let service = services::get_service(&state.db, id).await?;
     Ok(ws.on_upgrade(move |socket| async move {
-        services::audit(&state.db, "terminal.opened", &service.name, None).await;
+        let actor = Some(user.email.as_str());
+        services::audit(
+            &state.db,
+            actor,
+            "opened a terminal on",
+            &service.name,
+            None,
+        )
+        .await;
         if let Err(error) = run_terminal(&state, &container, socket).await {
             tracing::warn!(%error, "terminal session ended with an error");
         }
-        services::audit(&state.db, "terminal.closed", &service.name, None).await;
+        services::audit(
+            &state.db,
+            actor,
+            "closed a terminal on",
+            &service.name,
+            None,
+        )
+        .await;
     }))
 }
 

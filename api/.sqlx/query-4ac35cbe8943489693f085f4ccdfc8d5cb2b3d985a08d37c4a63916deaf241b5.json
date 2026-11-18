@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO github_app (id, app_id, slug, html_url, private_key_enc, webhook_secret_enc)\n         VALUES (1, $1, $2, $3, $4, $5)\n         ON CONFLICT (id) DO UPDATE SET app_id = $1, slug = $2, html_url = $3,\n             private_key_enc = $4, webhook_secret_enc = $5, created_at = now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4ac35cbe8943489693f085f4ccdfc8d5cb2b3d985a08d37c4a63916deaf241b5"
+}

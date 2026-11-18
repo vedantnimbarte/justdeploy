@@ -3,11 +3,12 @@ mod auth;
 mod overview;
 mod projects;
 mod streams;
+mod team;
 
 use crate::state::SharedState;
 use axum::{
     extract::State,
-    routing::{delete, get, post, put},
+    routing::{delete, get, patch, post, put},
     Json, Router,
 };
 use serde_json::{json, Value};
@@ -22,7 +23,41 @@ pub fn router(state: SharedState) -> Router {
         .route("/auth/login", post(auth::login))
         .route("/auth/logout", post(auth::logout))
         .route("/auth/me", get(auth::me))
-        .route("/auth/password", put(admin::change_password))
+        .route("/auth/password", put(auth::change_password))
+        .route(
+            "/auth/two-factor",
+            post(auth::start_two_factor).delete(auth::disable_two_factor),
+        )
+        .route("/auth/two-factor/confirm", post(auth::confirm_two_factor))
+        .route(
+            "/auth/tokens",
+            get(auth::list_tokens).post(auth::create_token),
+        )
+        .route("/auth/tokens/{id}", delete(auth::delete_token))
+        .route(
+            "/auth/invites/{token}",
+            get(auth::invite_info).post(auth::accept_invite),
+        )
+        // people
+        .route("/users", get(team::list_users))
+        .route(
+            "/users/{id}",
+            patch(team::update_user).delete(team::delete_user),
+        )
+        .route(
+            "/invites",
+            get(team::list_invites).post(team::create_invite),
+        )
+        .route("/invites/{id}", delete(team::revoke_invite))
+        .route("/activity", get(team::activity))
+        // GitHub App
+        .route("/github", get(admin::github_overview))
+        .route("/github/manifest", post(admin::github_manifest))
+        .route(
+            "/github/app",
+            post(admin::github_create).delete(admin::github_forget),
+        )
+        .route("/github/repos", get(admin::github_repos))
         .route("/overview", get(overview::overview))
         // projects and services
         .route("/projects", get(projects::list).post(projects::create))
@@ -31,6 +66,10 @@ pub fn router(state: SharedState) -> Router {
             get(projects::get).delete(projects::delete),
         )
         .route("/projects/{id}/services", post(projects::create_service))
+        .route(
+            "/projects/{id}/env",
+            get(projects::get_shared_env).put(projects::put_shared_env),
+        )
         .route(
             "/services/{id}",
             get(projects::get_service)
@@ -88,13 +127,15 @@ pub fn router(state: SharedState) -> Router {
             "/notification-channels",
             get(admin::list_channels).post(admin::create_channel),
         )
-        .route(
-            "/notification-channels/{id}",
-            delete(admin::delete_channel),
-        )
+        .route("/notification-channels/{id}", delete(admin::delete_channel))
         // webhooks authenticate by signature, not session
         .route("/webhooks/github/{id}", post(admin::github))
-        .route("/webhooks/gitlab/{id}", post(admin::gitlab));
+        .route("/webhooks/gitlab/{id}", post(admin::gitlab))
+        .route("/webhooks/github-app", post(admin::github_app_webhook))
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            team::record,
+        ));
 
     let mut app = Router::new().nest("/api/v1", api);
     // In production the dashboard is served from here; unknown paths fall back to

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { lazy, Suspense } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { api, kindLabel, type ServiceDetail } from "../api";
+import { useMe } from "../me";
 import { Badge, Band, Button, CodeLine, ErrorText, PageHeader, StatusDot, Tabs, useToast } from "../ui";
 import Backups from "./service/Backups";
 import Deployments from "./service/Deployments";
@@ -22,6 +23,7 @@ export default function ServicePage() {
   const [params, setParams] = useSearchParams();
   const toast = useToast();
   const queryClient = useQueryClient();
+  const { can } = useMe();
   const service = useQuery({
     queryKey: ["service", id],
     queryFn: () => api.get<ServiceDetail>(`/services/${id}`),
@@ -45,10 +47,10 @@ export default function ServicePage() {
     { id: "deployments", label: "Deployments" },
     ...(s.kind !== "database" ? [{ id: "runs" as Tab, label: "Runs" }] : []),
     { id: "logs", label: "Logs" },
-    { id: "env", label: "Variables" },
+    ...(can("member") ? [{ id: "env" as Tab, label: "Variables" }] : []),
     ...(s.kind !== "database" ? [{ id: "domains" as Tab, label: "Domains" }] : []),
     { id: "metrics", label: "Metrics" },
-    { id: "terminal", label: "Terminal" },
+    ...(can("member") ? [{ id: "terminal" as Tab, label: "Terminal" }] : []),
     ...(s.kind === "database" ? [{ id: "backups" as Tab, label: "Backups" }] : []),
     { id: "settings", label: "Settings" },
   ];
@@ -66,17 +68,19 @@ export default function ServicePage() {
         }
         title={s.name}
         actions={
-          <>
-            <Button busy={action.isPending && action.variables === "deploy"} onClick={() => action.mutate("deploy")}>
-              {s.kind === "app" ? "Deploy latest" : "Pull and redeploy"}
-            </Button>
-            <Button variant="secondary" disabled={stopped} onClick={() => action.mutate("restart")}>
-              Restart
-            </Button>
-            <Button variant="secondary" onClick={() => action.mutate(stopped ? "start" : "stop")}>
-              {stopped ? "Start" : "Stop"}
-            </Button>
-          </>
+          can("member") && (
+            <>
+              <Button busy={action.isPending && action.variables === "deploy"} onClick={() => action.mutate("deploy")}>
+                {s.kind === "app" ? "Deploy latest" : "Pull and redeploy"}
+              </Button>
+              <Button variant="secondary" disabled={stopped} onClick={() => action.mutate("restart")}>
+                Restart
+              </Button>
+              <Button variant="secondary" onClick={() => action.mutate(stopped ? "start" : "stop")}>
+                {stopped ? "Start" : "Stop"}
+              </Button>
+            </>
+          )
         }
       >
         <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2">

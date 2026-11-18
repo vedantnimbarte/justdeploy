@@ -143,13 +143,20 @@ pub fn send(state: &SharedState, event: Event) {
             Ok(rows) => rows,
             Err(error) => return tracing::warn!(%error, "could not load notification channels"),
         };
-        for row in rows.into_iter().filter(|r| r.notify_success || !event.success()) {
+        for row in rows
+            .into_iter()
+            .filter(|r| r.notify_success || !event.success())
+        {
             let delivered = match state.cipher.decrypt(&row.url_enc) {
                 Ok(url) => post(&row.kind, &url, &event, &state.config.public_url).await,
                 Err(e) => Err(anyhow::anyhow!("{e}")),
             };
             if let Err(error) = delivered {
-                tracing::warn!(channel = row.name, error = format!("{error:#}"), "notification not delivered");
+                tracing::warn!(
+                    channel = row.name,
+                    error = format!("{error:#}"),
+                    "notification not delivered"
+                );
             }
         }
     });

@@ -7,6 +7,7 @@ mod crypto;
 mod docker;
 mod engines;
 mod error;
+mod github;
 mod handlers;
 mod host;
 mod metrics;
@@ -47,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
         .context("migrations failed")?;
 
     if std::env::args().nth(1).as_deref() == Some("reset-password") {
-        return reset_password(&db).await;
+        return reset_password(&db, std::env::args().nth(2).as_deref()).await;
     }
 
     let docker =
@@ -85,13 +86,16 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `justdeploy reset-password`: prints a new random password and signs out every session.
-async fn reset_password(db: &sqlx::PgPool) -> anyhow::Result<()> {
+/// `justdeploy reset-password [email]`: a new random password for that account
+/// (the first owner by default), with two-factor sign-in turned off and its
+/// sessions signed out.
+async fn reset_password(db: &sqlx::PgPool, email: Option<&str>) -> anyhow::Result<()> {
     let password = crypto::random_string(20);
-    auth::reset_password(db, &password)
+    let email = auth::reset_password(db, email, &password)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    println!("New admin password: {password}");
-    println!("Every session was signed out. Change it under Settings after signing in.");
+    println!("New password for {email}: {password}");
+    println!("Two-factor sign-in is off and every session of theirs was signed out.");
+    println!("Change it under Account after signing in.");
     Ok(())
 }

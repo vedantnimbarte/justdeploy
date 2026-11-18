@@ -241,7 +241,8 @@ export default function ServiceSettings({ service: s }: { service: ServiceDetail
         <Card>
           <SectionTitle>Automatic deploys</SectionTitle>
           <p className="mb-4">
-            Add a webhook in your Git host pointing at one of these URLs, with the secret below. A push to{" "}
+            With the GitHub App installed on this repository (Settings, GitHub), pushes already deploy and nothing is needed here.
+            Otherwise, add a webhook in your Git host pointing at one of these URLs, with the secret below. A push to{" "}
             <code>{s.branch}</code> deploys. In GitHub choose content type <code>application/json</code>.
           </p>
           <div className="grid gap-3">

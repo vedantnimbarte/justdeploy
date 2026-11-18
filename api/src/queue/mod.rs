@@ -29,11 +29,22 @@ pub enum Job {
         #[serde(default)]
         service_id: Uuid,
     },
-    RemoveService { service_id: Uuid },
-    RemoveProject { project_id: Uuid },
-    RemovePreview { service_id: Uuid, pr: i32 },
-    Backup { backup_id: Uuid },
-    Restore { backup_id: Uuid },
+    RemoveService {
+        service_id: Uuid,
+    },
+    RemoveProject {
+        project_id: Uuid,
+    },
+    RemovePreview {
+        service_id: Uuid,
+        pr: i32,
+    },
+    Backup {
+        backup_id: Uuid,
+    },
+    Restore {
+        backup_id: Uuid,
+    },
 }
 
 impl Job {

@@ -144,13 +144,6 @@ pub async fn deploy(state: &SharedState, id: &str, target: DeployTemplate) -> Re
         let url = services::connection_url(state, &service).await?;
         created.insert(spec.name.clone(), (url, vars));
     }
-    services::audit(
-        &state.db,
-        "template.deployed",
-        &template.id,
-        Some(&project.name),
-    )
-    .await;
     Ok(project)
 }
 

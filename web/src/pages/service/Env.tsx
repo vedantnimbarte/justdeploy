@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api, type EnvVar, type ServiceDetail } from "../../api";
 import { Button, Card, Checkbox, ErrorText, Input, Modal, SectionTitle, Textarea, useToast } from "../../ui";
 
@@ -20,11 +20,53 @@ export function parseDotenv(text: string): EnvVar[] {
 }
 
 export default function Env({ service }: { service: ServiceDetail }) {
+  const shared = useQuery({
+    queryKey: ["shared-env", service.project.id],
+    queryFn: () => api.get<EnvVar[]>(`/projects/${service.project.id}/env`),
+  });
+  return (
+    <EnvEditor
+      url={`/services/${service.id}/env`}
+      title="Environment variables"
+      intro={
+        <>
+          Encrypted at rest, and available at build time too. Saving re-runs the current image with the new values; use{" "}
+          <strong>Deploy latest</strong> to rebuild when a build step reads them.
+          {service.kind !== "database" && service.port ? ` PORT is set to ${service.port} unless you set it here.` : ""} Point at
+          another service with a reference: <code>{"${{db.URL}}"}</code> is a database's connection URL,{" "}
+          <code>{"${{api.HOST}}"}</code> and <code>{"${{api.PORT}}"}</code> another service's address, and{" "}
+          <code>{"${{api.NAME}}"}</code> any of its variables.
+        </>
+      }
+      footer={
+        shared.data && shared.data.length > 0 ? (
+          <p className="mt-4 text-sm text-muted">
+            Also gets the project's shared variables: {shared.data.map((v) => v.key).join(", ")}. A variable here with the same name
+            wins.
+          </p>
+        ) : null
+      }
+    />
+  );
+}
+
+/** A list of variables stored at `url`, edited as a whole: a service's, or a project's shared ones. */
+export function EnvEditor({
+  url,
+  title,
+  intro,
+  footer,
+}: {
+  url: string;
+  title: string;
+  intro: ReactNode;
+  footer?: ReactNode;
+}) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const env = useQuery({
-    queryKey: ["env", service.id],
-    queryFn: () => api.get<EnvVar[]>(`/services/${service.id}/env`),
+    queryKey: ["env", url],
+    queryFn: () => api.get<EnvVar[]>(url),
   });
   const [rows, setRows] = useState<EnvVar[]>([]);
   const [show, setShow] = useState(false);
@@ -38,12 +80,12 @@ export default function Env({ service }: { service: ServiceDetail }) {
   const save = useMutation({
     mutationFn: () =>
       api.put<{ redeploying: boolean }>(
-        `/services/${service.id}/env`,
+        url,
         rows.filter((r) => r.key.trim()),
       ),
     onSuccess: (result) => {
       toast(result.redeploying ? "Saved. Redeploying with the new values." : "Saved");
-      queryClient.invalidateQueries({ queryKey: ["env", service.id] });
+      queryClient.invalidateQueries({ queryKey: ["env", url] });
     },
   });
 
@@ -60,13 +102,9 @@ export default function Env({ service }: { service: ServiceDetail }) {
           </Button>
         }
       >
-        Environment variables
+        {title}
       </SectionTitle>
-      <p className="mb-6 max-w-3xl">
-        Encrypted at rest, and available at build time too. Saving re-runs the current image with the
-        new values; use <strong>Deploy latest</strong> to rebuild when a build step reads them.
-        {service.kind !== "database" && service.port ? ` PORT is set to ${service.port} unless you set it here.` : ""}
-      </p>
+      <p className="mb-6 max-w-3xl">{intro}</p>
       <Card>
         {env.isPending ? (
           <p>Loading…</p>
@@ -110,6 +148,7 @@ export default function Env({ service }: { service: ServiceDetail }) {
           </div>
         )}
       </Card>
+      {footer}
       <Modal open={importing} title="Paste a .env file" onClose={() => setImporting(false)} wide>
         <div className="space-y-4">
           <p>Variables with the same name are replaced; others are added.</p>

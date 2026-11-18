@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { api, type Project, type Service, type Settings } from "../api";
+import { api, type GithubOverview, type GithubRepo, type Project, type Service, type Settings } from "../api";
 import { Band, Button, Card, Checkbox, ErrorText, Field, Input, PageHeader, Segmented, Select, Tabs, Textarea } from "../ui";
 import { parseDotenv } from "./service/Env";
 
@@ -15,6 +15,13 @@ export default function NewServicePage() {
   const [schedule, setSchedule] = useState("0 3 * * *");
   const project = useQuery({ queryKey: ["project", id], queryFn: () => api.get<Project>(`/projects/${id}`) });
   const settings = useQuery({ queryKey: ["settings"], queryFn: () => api.get<Settings>("/settings") });
+  const github = useQuery({ queryKey: ["github"], queryFn: () => api.get<GithubOverview>("/github") });
+  const githubReady = !!github.data?.app && github.data.installations.length > 0;
+  const repos = useQuery({
+    queryKey: ["github-repos"],
+    queryFn: () => api.get<GithubRepo[]>("/github/repos"),
+    enabled: githubReady && kind === "app",
+  });
 
   const [form, setForm] = useState({
     name: "",
@@ -98,7 +105,42 @@ export default function NewServicePage() {
 
               {kind === "app" && (
                 <>
-                  <Field label="Repository URL" hint="HTTPS clone URL from GitHub, GitLab or any Git host.">
+                  {githubReady && (
+                    <Field
+                      label="Repository from GitHub"
+                      hint={
+                        repos.isError
+                          ? `Couldn't list them: ${repos.error.message}`
+                          : "Repositories the GitHub App is installed on. It clones them and deploys on push; no token or webhook needed."
+                      }
+                    >
+                      <Select
+                        value={repos.data?.find((r) => r.clone_url === form.repo_url)?.clone_url ?? ""}
+                        onChange={(e) => {
+                          const repo = repos.data?.find((r) => r.clone_url === e.target.value);
+                          if (!repo) return;
+                          setForm((f) => ({
+                            ...f,
+                            repo_url: repo.clone_url,
+                            branch: repo.default_branch,
+                            name: f.name || (repo.full_name.split("/")[1] ?? "").toLowerCase().replace(/[^a-z0-9-]/g, "-").slice(0, 30),
+                          }));
+                        }}
+                      >
+                        <option value="">{repos.isPending ? "Loading repositories…" : "Choose a repository"}</option>
+                        {repos.data?.map((r) => (
+                          <option key={r.full_name} value={r.clone_url}>
+                            {r.full_name}
+                            {r.private ? " (private)" : ""}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  )}
+                  <Field
+                    label="Repository URL"
+                    hint={githubReady ? "Or any other HTTPS clone URL, from GitLab or any Git host." : "HTTPS clone URL from GitHub, GitLab or any Git host."}
+                  >
                     <Input
                       required
                       type="url"

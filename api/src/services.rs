@@ -410,7 +410,13 @@ pub async fn update_service(
         Some(v) => optional_text(Some(v)),
         None => current.cron_schedule.clone(),
     };
-    validate_schedule(&current.kind, cron_schedule.as_deref(), public, public_port, preview)?;
+    validate_schedule(
+        &current.kind,
+        cron_schedule.as_deref(),
+        public,
+        public_port,
+        preview,
+    )?;
     let pre_deploy_command = match update.pre_deploy_command {
         Some(v) => optional_text(Some(v)),
         None => current.pre_deploy_command.clone(),
@@ -711,6 +717,138 @@ pub async fn replace_env(
     Ok(true)
 }
 
+/// A project's shared variables: every service in it gets them.
+pub async fn shared_env(state: &SharedState, project_id: Uuid) -> Result<Vec<(String, String)>> {
+    let rows = sqlx::query!(
+        "SELECT key, value_enc FROM shared_env_vars WHERE project_id = $1 ORDER BY key",
+        project_id
+    )
+    .fetch_all(&state.db)
+    .await?;
+    rows.into_iter()
+        .map(|r| Ok((r.key, state.cipher.decrypt(&r.value_enc)?)))
+        .collect()
+}
+
+/// Replaces every shared variable. Returns whether anything changed.
+pub async fn replace_shared_env(
+    state: &SharedState,
+    project_id: Uuid,
+    vars: BTreeMap<String, String>,
+) -> Result<bool> {
+    validate_env(&vars)?;
+    let before: BTreeMap<String, String> =
+        shared_env(state, project_id).await?.into_iter().collect();
+    if before == vars {
+        return Ok(false);
+    }
+    let mut tx = state.db.begin().await?;
+    sqlx::query!(
+        "DELETE FROM shared_env_vars WHERE project_id = $1",
+        project_id
+    )
+    .execute(&mut *tx)
+    .await?;
+    for (key, value) in &vars {
+        sqlx::query!(
+            "INSERT INTO shared_env_vars (project_id, key, value_enc) VALUES ($1, $2, $3)",
+            project_id,
+            key,
+            state.cipher.encrypt(value)
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(true)
+}
+
+/// What a container (and a build) gets: the project's shared variables, then
+/// the service's own, which win, with `${{service.KEY}}` references to sibling
+/// services filled in. A reference can name any variable of the sibling, or
+/// HOST, PORT, and for a database URL.
+pub async fn runtime_env(state: &SharedState, service: &Service) -> Result<Vec<(String, String)>> {
+    let shared: BTreeMap<String, String> = shared_env(state, service.project_id)
+        .await?
+        .into_iter()
+        .collect();
+    let mut own = shared.clone();
+    own.extend(env(state, service.id).await?);
+
+    let wanted: std::collections::HashSet<String> = own
+        .values()
+        .flat_map(|v| references(v))
+        .map(|(name, _)| name)
+        .collect();
+    let mut siblings = HashMap::new();
+    for sibling in list_services(&state.db, service.project_id).await? {
+        if !wanted.contains(&sibling.name) {
+            continue;
+        }
+        let mut vars = shared.clone();
+        vars.extend(env(state, sibling.id).await?);
+        vars.insert("HOST".into(), sibling.name.clone());
+        if let Some(port) = sibling.port {
+            vars.insert("PORT".into(), port.to_string());
+        }
+        if let Some(url) = connection_url(state, &sibling).await? {
+            vars.insert("URL".into(), url);
+        }
+        siblings.insert(sibling.name.clone(), vars);
+    }
+    own.into_iter()
+        .map(|(key, value)| {
+            substitute(&value, &siblings)
+                .map(|v| (key.clone(), v))
+                .map_err(|e| bad_request(format!("{key}: {e}")))
+        })
+        .collect()
+}
+
+/// Every `${{service.KEY}}` in a value, as (service, key).
+fn references(value: &str) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    let mut rest = value;
+    while let Some(start) = rest.find("${{") {
+        let after = &rest[start + 3..];
+        let Some(end) = after.find("}}") else { break };
+        if let Some((service, key)) = after[..end].trim().split_once('.') {
+            found.push((service.trim().to_string(), key.trim().to_string()));
+        }
+        rest = &after[end + 2..];
+    }
+    found
+}
+
+fn substitute(
+    value: &str,
+    siblings: &HashMap<String, BTreeMap<String, String>>,
+) -> std::result::Result<String, String> {
+    let mut out = String::new();
+    let mut rest = value;
+    while let Some(start) = rest.find("${{") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 3..];
+        let end = after
+            .find("}}")
+            .ok_or_else(|| "a ${{ reference is never closed with }}".to_string())?;
+        let inner = after[..end].trim();
+        let (service, key) = inner
+            .split_once('.')
+            .ok_or_else(|| format!("${{{{{inner}}}}} should look like ${{{{service.KEY}}}}"))?;
+        let vars = siblings.get(service.trim()).ok_or_else(|| {
+            format!("${{{{{inner}}}}} refers to {service}, which is not in this project")
+        })?;
+        let resolved = vars
+            .get(key.trim())
+            .ok_or_else(|| format!("${{{{{inner}}}}}: {service} has no variable {key}"))?;
+        out.push_str(resolved);
+        rest = &after[end + 2..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
 /// For a database, how sibling services connect to it.
 pub async fn connection_url(state: &SharedState, service: &Service) -> Result<Option<String>> {
     let Some(engine) = service.engine.as_deref() else {
@@ -810,9 +948,17 @@ pub async fn volumes(db: &PgPool, service_id: Uuid) -> Result<Vec<Volume>> {
     .await?)
 }
 
-pub async fn audit(db: &PgPool, action: &str, target: &str, detail: Option<&str>) {
+/// One line in the activity log. `actor` is an email; None is justdeploy itself.
+pub async fn audit(
+    db: &PgPool,
+    actor: Option<&str>,
+    action: &str,
+    target: &str,
+    detail: Option<&str>,
+) {
     let result = sqlx::query!(
-        "INSERT INTO audit_log (action, target, detail) VALUES ($1, $2, $3)",
+        "INSERT INTO audit_log (actor, action, target, detail) VALUES ($1, $2, $3, $4)",
+        actor,
         action,
         target,
         detail
@@ -821,6 +967,48 @@ pub async fn audit(db: &PgPool, action: &str, target: &str, detail: Option<&str>
     .await;
     if let Err(error) = result {
         tracing::warn!(%error, "audit log write failed");
+    }
+}
+
+#[cfg(test)]
+mod reference_tests {
+    use super::*;
+
+    #[test]
+    fn references_resolve_from_siblings_and_report_what_is_missing() {
+        let siblings = HashMap::from([(
+            "db".to_string(),
+            BTreeMap::from([
+                (
+                    "URL".to_string(),
+                    "postgresql://u:p@db:5432/app".to_string(),
+                ),
+                ("HOST".to_string(), "db".to_string()),
+            ]),
+        )]);
+        assert_eq!(
+            substitute("${{db.URL}}?sslmode=disable", &siblings).unwrap(),
+            "postgresql://u:p@db:5432/app?sslmode=disable"
+        );
+        assert_eq!(
+            substitute("${{ db.HOST }}:5432", &siblings).unwrap(),
+            "db:5432"
+        );
+        assert_eq!(
+            substitute("plain ${value}", &siblings).unwrap(),
+            "plain ${value}"
+        );
+        assert!(substitute("${{cache.URL}}", &siblings)
+            .unwrap_err()
+            .contains("not in this project"));
+        assert!(substitute("${{db.NOPE}}", &siblings)
+            .unwrap_err()
+            .contains("no variable NOPE"));
+        assert!(substitute("${{db.URL", &siblings).is_err());
+        assert_eq!(
+            references("a ${{db.URL}} b ${{api.PORT}}"),
+            vec![("db".into(), "URL".into()), ("api".into(), "PORT".into())]
+        );
     }
 }
 

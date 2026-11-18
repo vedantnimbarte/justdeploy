@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT EXISTS (SELECT 1 FROM admin) AS \"exists!\"",
+  "query": "SELECT EXISTS (SELECT 1 FROM users) AS \"exists!\"",
   "describe": {
     "columns": [
       {
@@ -17,5 +17,5 @@
       null
     ]
   },
-  "hash": "b4d9bfc23f6324dd684f8162ad42eeb96edbc9676a4f44397b1fff70b8308fa9"
+  "hash": "f5debc7659fb8b486a6039d98328e6c54d527caf37345378370d2ec4f2f8f6c6"
 }

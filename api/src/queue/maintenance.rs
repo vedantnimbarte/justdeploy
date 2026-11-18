@@ -117,7 +117,10 @@ async fn reconcile(state: SharedState) -> Result<()> {
                 services::rerelease(&state, &service, "reconcile").await?;
             }
             "running" => {
-                let down: Vec<_> = production.iter().filter(|c| !docker::is_running(c)).collect();
+                let down: Vec<_> = production
+                    .iter()
+                    .filter(|c| !docker::is_running(c))
+                    .collect();
                 if !down.is_empty() && notify::first_in_an_hour(row.id) {
                     notify::send(
                         &state,

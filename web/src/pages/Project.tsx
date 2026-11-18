@@ -2,11 +2,14 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api, kindLabel, timeAgo, triggerLabel, type Project, type Service } from "../api";
+import { useMe } from "../me";
 import { Badge, Band, Button, ButtonLink, ConfirmDelete, EmptyState, ErrorText, PageHeader, StatusDot } from "../ui";
+import { EnvEditor } from "./service/Env";
 
 export default function ProjectPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
+  const { can } = useMe();
   const [deleting, setDeleting] = useState(false);
   const project = useQuery({
     queryKey: ["project", id],
@@ -34,17 +37,19 @@ export default function ProjectPage() {
         title={p.name}
         lead={`${p.services.length} service${p.services.length === 1 ? "" : "s"} on a private network. Services reach each other by name.`}
         actions={
-          <>
-            <ButtonLink to={`/templates?project=${id}`} variant="secondary">
-              Add from template
-            </ButtonLink>
-            <ButtonLink to={`/projects/${id}/new`}>Add service</ButtonLink>
-          </>
+          can("member") && (
+            <>
+              <ButtonLink to={`/templates?project=${id}`} variant="secondary">
+                Add from template
+              </ButtonLink>
+              <ButtonLink to={`/projects/${id}/new`}>Add service</ButtonLink>
+            </>
+          )
         }
       />
       <Band>
         {p.services.length === 0 ? (
-          <EmptyState title="This project is empty" action={<ButtonLink to={`/projects/${id}/new`}>Add service</ButtonLink>}>
+          <EmptyState title="This project is empty" action={can("member") && <ButtonLink to={`/projects/${id}/new`}>Add service</ButtonLink>}>
             Add an app from a Git repository, a Docker image, or a database.
           </EmptyState>
         ) : (
@@ -63,12 +68,24 @@ export default function ProjectPage() {
           </div>
         )}
 
-        <div className="mt-12 flex flex-wrap items-center justify-between gap-4 border-t border-line pt-6">
-          <p className="text-sm text-muted">Deleting the project removes every service in it, including database data.</p>
-          <Button variant="danger" onClick={() => setDeleting(true)}>
-            Delete project
-          </Button>
-        </div>
+        {can("member") && (
+          <div className="mt-12 max-w-5xl">
+            <EnvEditor
+              url={`/projects/${id}/env`}
+              title="Shared variables"
+              intro="Every service in this project gets these, at build and run time. A service's own variable with the same name wins. Saving redeploys the project's running services."
+            />
+          </div>
+        )}
+
+        {can("admin") && (
+          <div className="mt-12 flex flex-wrap items-center justify-between gap-4 border-t border-line pt-6">
+            <p className="text-sm text-muted">Deleting the project removes every service in it, including database data.</p>
+            <Button variant="danger" onClick={() => setDeleting(true)}>
+              Delete project
+            </Button>
+          </div>
+        )}
       </Band>
       <ConfirmDelete
         open={deleting}
@@ -97,6 +114,10 @@ function ServiceRow({ service: s }: { service: Service }) {
   ) : s.port ? (
     <span className="font-mono text-[13px] text-muted">
       {s.name}:{s.port}
+    </span>
+  ) : s.cron_schedule ? (
+    <span className="text-sm text-muted">
+      Runs on <code className="text-[13px]">{s.cron_schedule}</code>
     </span>
   ) : (
     <span className="text-sm text-muted">Worker, no port</span>

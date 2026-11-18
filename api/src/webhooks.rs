@@ -105,6 +105,12 @@ pub async fn on_push(state: &SharedState, service: &Service, push: Push) -> Resu
     if service.kind != "app" || service.desired_state != "running" {
         return Ok("ignored: the service is not a running app".into());
     }
+    if already_deploying(state, service, &sha, None).await? {
+        return Ok(format!(
+            "ignored: {} is already deploying",
+            &sha[..sha.len().min(7)]
+        ));
+    }
     let message = first_line(
         push.head_commit
             .as_ref()
@@ -141,6 +147,9 @@ pub async fn on_pull_request(
     match event.action.as_str() {
         "opened" | "reopened" | "synchronize" => {
             let pr = event.pull_request;
+            if already_deploying(state, service, &pr.head.sha, Some(event.number)).await? {
+                return Ok("ignored: that commit is already deploying".into());
+            }
             let deployment = services::create_deployment(
                 state,
                 service,
@@ -171,6 +180,27 @@ pub async fn on_pull_request(
         }
         _ => Ok("ignored".into()),
     }
+}
+
+/// The same commit was queued in the last ten minutes and hasn't failed.
+async fn already_deploying(
+    state: &SharedState,
+    service: &Service,
+    sha: &str,
+    pr: Option<i32>,
+) -> Result<bool> {
+    Ok(sqlx::query_scalar!(
+        r#"SELECT EXISTS (
+               SELECT 1 FROM deployments
+               WHERE service_id = $1 AND commit_sha = $2 AND pr_number IS NOT DISTINCT FROM $3
+                 AND status <> 'failed' AND created_at > now() - interval '10 minutes'
+           ) AS "exists!""#,
+        service.id,
+        sha,
+        pr
+    )
+    .fetch_one(&state.db)
+    .await?)
 }
 
 pub fn forbidden() -> Error {

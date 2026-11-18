@@ -15,6 +15,9 @@ pub enum Error {
     BadRequest(String),
     #[error("not signed in")]
     Unauthorized,
+    /// The password was right; the account also needs a one-time code.
+    #[error("enter the 6-digit code from your authenticator app")]
+    TwoFactorRequired,
     #[error("{0}")]
     Conflict(String),
     #[error("too many attempts, try again later")]
@@ -52,7 +55,7 @@ impl IntoResponse for Error {
         let status = match &self {
             Error::NotFound => StatusCode::NOT_FOUND,
             Error::BadRequest(_) => StatusCode::BAD_REQUEST,
-            Error::Unauthorized => StatusCode::UNAUTHORIZED,
+            Error::Unauthorized | Error::TwoFactorRequired => StatusCode::UNAUTHORIZED,
             Error::Conflict(_) => StatusCode::CONFLICT,
             Error::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             Error::Forbidden(_) => StatusCode::FORBIDDEN,

@@ -34,7 +34,7 @@ export const api = {
   post: <T>(path: string, body?: unknown) => request<T>("POST", path, body ?? {}),
   put: <T>(path: string, body?: unknown) => request<T>("PUT", path, body),
   patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, body),
-  del: <T>(path: string) => request<T>("DELETE", path),
+  del: <T>(path: string, body?: unknown) => request<T>("DELETE", path, body),
 };
 
 export type Status = "deploying" | "running" | "scheduled" | "crashed" | "stopped" | "failed" | "idle" | "deleting";
@@ -158,6 +158,65 @@ export interface NotificationChannel {
   notify_success: boolean;
   target: string;
   created_at: string;
+}
+
+export type Role = "viewer" | "member" | "admin" | "owner";
+const RANK: Record<Role, number> = { viewer: 0, member: 1, admin: 2, owner: 3 };
+
+/** Whether someone with `role` may do what needs `needed`. Each role includes the ones below. */
+export const allows = (role: Role | undefined, needed: Role) => role !== undefined && RANK[role] >= RANK[needed];
+
+export const ROLE_LABEL: Record<Role, string> = { viewer: "Viewer", member: "Member", admin: "Admin", owner: "Owner" };
+export const ROLE_HINT: Record<Role, string> = {
+  viewer: "Sees projects, logs and deploys. No secrets, no changes.",
+  member: "Deploys and changes services, variables and domains, runs commands, opens terminals.",
+  admin: "Everything a member can, plus deleting projects and services, restoring backups and changing settings.",
+  owner: "Everything an admin can, plus inviting people and changing their access.",
+};
+
+export interface Person {
+  id: string;
+  email: string;
+  role: Role;
+  two_factor: boolean;
+  created_at: string;
+}
+
+export interface Invite {
+  id: string;
+  email: string;
+  role: Role;
+  expires_at: string;
+  created_at: string;
+}
+
+export interface ApiToken {
+  id: string;
+  name: string;
+  last_used_at: string | null;
+  created_at: string;
+}
+
+export interface ActivityEntry {
+  id: number;
+  actor: string | null;
+  action: string;
+  target: string;
+  detail: string | null;
+  created_at: string;
+}
+
+export interface GithubOverview {
+  app: { slug: string; html_url: string; install_url: string } | null;
+  installations: { id: number; account: string }[];
+  error: string | null;
+}
+
+export interface GithubRepo {
+  full_name: string;
+  clone_url: string;
+  default_branch: string;
+  private: boolean;
 }
 
 export interface DnsCheck {

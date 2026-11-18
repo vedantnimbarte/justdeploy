@@ -3,7 +3,7 @@
 
 use super::projects::{latest_deployment, status};
 use crate::{
-    auth::Admin,
+    auth::Viewer,
     docker::{self, LABEL_KIND, LABEL_SERVICE},
     error::Result,
     host::{self, DockerDisk},
@@ -110,7 +110,7 @@ pub struct Range {
 }
 
 pub async fn overview(
-    _: Admin,
+    _: Viewer,
     State(state): State<SharedState>,
     Query(range): Query<Range>,
 ) -> Result<Json<Overview>> {

@@ -646,13 +646,12 @@ pub async fn run_restore(state: &SharedState, backup_id: Uuid) -> Result<()> {
     )
     .execute(&state.db)
     .await?;
-    services::audit(
-        &state.db,
-        &format!("backup.restore.{status}"),
-        &row.object_key,
-        error.as_deref(),
-    )
-    .await;
+    let phrase = if status == "succeeded" {
+        "finished restoring"
+    } else {
+        "failed to restore"
+    };
+    services::audit(&state.db, None, phrase, &row.object_key, error.as_deref()).await;
     Ok(())
 }
 

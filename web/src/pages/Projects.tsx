@@ -2,10 +2,12 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router";
 import { api, timeAgo, type Project } from "../api";
+import { useMe } from "../me";
 import { Band, Button, ButtonLink, cx, Dot, EmptyState, ErrorText, Field, Input, Modal, PageHeader } from "../ui";
 
 export default function ProjectsPage() {
   const [creating, setCreating] = useState(false);
+  const { can } = useMe();
   const projects = useQuery({
     queryKey: ["projects"],
     queryFn: () => api.get<Project[]>("/projects"),
@@ -18,12 +20,14 @@ export default function ProjectsPage() {
         title="Projects"
         lead="Each project is a private network: its services reach each other by name, like db:5432."
         actions={
-          <>
-            <ButtonLink to="/templates" variant="secondary">
-              Deploy a template
-            </ButtonLink>
-            <Button onClick={() => setCreating(true)}>New project</Button>
-          </>
+          can("member") && (
+            <>
+              <ButtonLink to="/templates" variant="secondary">
+                Deploy a template
+              </ButtonLink>
+              <Button onClick={() => setCreating(true)}>New project</Button>
+            </>
+          )
         }
       />
       <Band>
@@ -35,12 +39,14 @@ export default function ProjectsPage() {
           <EmptyState
             title="Nothing deployed yet"
             action={
-              <>
-                <ButtonLink to="/templates">Browse templates</ButtonLink>
-                <Button variant="secondary" onClick={() => setCreating(true)}>
-                  New project
-                </Button>
-              </>
+              can("member") && (
+                <>
+                  <ButtonLink to="/templates">Browse templates</ButtonLink>
+                  <Button variant="secondary" onClick={() => setCreating(true)}>
+                    New project
+                  </Button>
+                </>
+              )
             }
           >
             Start from a template, or create a project and add an app from Git, a Docker image or a database.

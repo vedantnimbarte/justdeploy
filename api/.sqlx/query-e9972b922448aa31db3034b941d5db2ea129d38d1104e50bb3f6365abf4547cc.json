@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.name || '/' || s.name AS \"n!\"\n                   FROM services s JOIN projects p ON p.id = s.project_id WHERE s.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "n!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "e9972b922448aa31db3034b941d5db2ea129d38d1104e50bb3f6365abf4547cc"
+}

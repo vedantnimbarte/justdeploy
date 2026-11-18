@@ -272,8 +272,17 @@ mod tests {
     #[test]
     fn one_off_runs_its_command_through_a_shell_on_the_project_network() {
         let s = service();
-        let body = one_off("jd-x:1", Some("npm run migrate"), &[("A".into(), "1".into())], &s, "jd-proj-1");
-        assert_eq!(body.entrypoint, Some(vec!["sh".to_string(), "-c".to_string()]));
+        let body = one_off(
+            "jd-x:1",
+            Some("npm run migrate"),
+            &[("A".into(), "1".into())],
+            &s,
+            "jd-proj-1",
+        );
+        assert_eq!(
+            body.entrypoint,
+            Some(vec!["sh".to_string(), "-c".to_string()])
+        );
         assert_eq!(body.cmd, Some(vec!["npm run migrate".to_string()]));
         assert_eq!(body.labels.unwrap()[MANAGED], "helper");
         let host = body.host_config.unwrap();
@@ -281,7 +290,11 @@ mod tests {
         assert_eq!(host.memory, Some(256 * 1024 * 1024));
 
         let default = one_off("jd-x:1", None, &[], &s, "jd-proj-1");
-        assert_eq!((default.entrypoint, default.cmd), (None, None), "no command keeps the image's own");
+        assert_eq!(
+            (default.entrypoint, default.cmd),
+            (None, None),
+            "no command keeps the image's own"
+        );
     }
 
     fn service() -> Service {

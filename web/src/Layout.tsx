@@ -1,7 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router";
-import { api, type Project } from "./api";
+import { api, ROLE_LABEL, type Project } from "./api";
+import { useMe } from "./me";
 import { cx, Dot, Segmented } from "./ui";
 
 /** The mark and the word as one lockup. Inverted on dark surfaces. */
@@ -71,6 +72,11 @@ const NAV = [
     icon: icon(<path d="M3.5 3.5h5v5h-5zm8 0h5v5h-5zm-8 8h5v5h-5zm8 2.5h5M14 11.5v5" />),
   },
   {
+    to: "/team",
+    label: "Team",
+    icon: icon(<path d="M7.5 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm-5 8a5 5 0 0 1 10 0M13 3.5a3 3 0 0 1 0 5.5m2 8a5 5 0 0 0-3-4.6" />),
+  },
+  {
     to: "/settings",
     label: "Settings",
     icon: icon(
@@ -97,7 +103,7 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
     queryFn: () => api.get<Project[]>("/projects"),
     refetchInterval: 10_000,
   });
-  const me = useQuery({ queryKey: ["me"], queryFn: () => api.get<{ email: string }>("/auth/me") });
+  const { me } = useMe();
   const current = (to: string) => pathname.startsWith(to) || (to === "/projects" && pathname.startsWith("/services"));
 
   const signOut = async () => {
@@ -167,9 +173,14 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
           ]}
         />
         <div className="mt-4 flex items-center justify-between gap-3 text-sm">
-          <span className="truncate text-muted" title={me.data?.email}>
-            {me.data?.email}
-          </span>
+          <Link
+            to="/account"
+            onClick={onNavigate}
+            className="min-w-0 truncate text-muted no-underline hover:text-fg"
+            title={me ? `${me.email}, ${ROLE_LABEL[me.role].toLowerCase()}. Your account` : undefined}
+          >
+            {me?.email}
+          </Link>
           <button onClick={signOut} className="shrink-0 font-medium hover:underline">
             Sign out
           </button>

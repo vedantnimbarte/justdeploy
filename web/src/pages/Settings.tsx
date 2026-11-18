@@ -2,18 +2,33 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
 import { api, timeAgo, type Destination, type NotificationChannel, type Settings } from "../api";
 import { DnsPanel, useDnsCheck } from "../DnsSetup";
+import { useMe } from "../me";
+import { GitHubCard } from "./GitHub";
 import { Band, Button, Card, Checkbox, ErrorText, Field, Input, PageHeader, SectionTitle, Select, useToast } from "../ui";
 
 export default function SettingsPage() {
   const settings = useQuery({ queryKey: ["settings"], queryFn: () => api.get<Settings>("/settings") });
+  const { me, can } = useMe();
+  if (me && !can("admin")) {
+    return (
+      <>
+        <PageHeader title="Settings" lead="Domains, TLS, GitHub, notifications and backups for this server." />
+        <Band className="max-w-4xl">
+          <Card>
+            <p>Only admins change server settings. Your own password, two-factor sign-in and API tokens are under Account.</p>
+          </Card>
+        </Band>
+      </>
+    );
+  }
   return (
     <>
-      <PageHeader title="Settings" lead="Domains, TLS, notifications, backups and your account." />
+      <PageHeader title="Settings" lead="Domains, TLS, GitHub, notifications and backups for this server." />
       <Band className="grid max-w-4xl gap-6">
         {settings.data && <DomainSettings settings={settings.data} />}
+        <GitHubCard />
         <Notifications />
         <Destinations />
-        <PasswordForm />
         {settings.data && (
           <p className="text-sm text-muted">
             justdeploy {settings.data.version}. Webhooks reach this server at {settings.data.public_url}.
@@ -321,43 +336,6 @@ function Destinations() {
         <div>
           <Button type="submit" busy={create.isPending}>
             Test and add
-          </Button>
-        </div>
-      </form>
-    </Card>
-  );
-}
-
-function PasswordForm() {
-  const toast = useToast();
-  const [current, setCurrent] = useState("");
-  const [next, setNext] = useState("");
-  const change = useMutation({
-    mutationFn: () => api.put("/auth/password", { current, new: next }),
-    onSuccess: () => {
-      toast("Password changed");
-      setCurrent("");
-      setNext("");
-    },
-  });
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    change.mutate();
-  };
-  return (
-    <Card>
-      <SectionTitle>Admin password</SectionTitle>
-      <form onSubmit={submit} className="grid gap-5 md:grid-cols-2">
-        <Field label="Current password">
-          <Input type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} required />
-        </Field>
-        <Field label="New password" hint="At least 10 characters.">
-          <Input type="password" autoComplete="new-password" minLength={10} value={next} onChange={(e) => setNext(e.target.value)} required />
-        </Field>
-        <div className="md:col-span-2">
-          <ErrorText error={change.error} />
-          <Button type="submit" busy={change.isPending} className="mt-2">
-            Change password
           </Button>
         </div>
       </form>

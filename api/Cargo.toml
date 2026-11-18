@@ -38,6 +38,11 @@ cron = "0.17"
 bytes = "1"
 # Already in the tree through object_store; used for notification webhooks.
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
+# GitHub App: RS256 tokens signed with the app's private key (ring is already in the tree).
+jsonwebtoken = "9"
+# Two-factor sign-in: one-time codes, and the setup QR code as SVG.
+totp-rs = { version = "5", features = ["otpauth", "gen_secret"] }
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 time = "0.3"
 
 [lints.clippy]

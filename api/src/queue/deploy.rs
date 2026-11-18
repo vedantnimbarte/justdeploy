@@ -11,6 +11,7 @@
 use crate::{
     docker::{self, spec, LABEL_DEPLOYMENT, LABEL_KIND, LABEL_PR, LABEL_SERVICE},
     error::{Error, Result},
+    github,
     models::{Deployment, Project, Service},
     names, notify, services,
     state::SharedState,
@@ -97,6 +98,7 @@ pub async fn run(state: &SharedState, deployment_id: Uuid) -> Result<()> {
     };
 
     let log = DeployLog::start(state.db.clone(), deployment.id);
+    github::report(state, &service, &deployment, "pending", "Deploying".into());
     let outcome = if service.desired_state == "deleting" {
         Err(anyhow!("the service is being deleted"))
     } else {
@@ -106,6 +108,10 @@ pub async fn run(state: &SharedState, deployment_id: Uuid) -> Result<()> {
         log.line(format!("==> Deployment failed: {error:#}"));
     }
     log.finish().await;
+    // The build recorded the commit it checked out; statuses and messages use it.
+    let deployment = services::get_deployment(&state.db, deployment.id)
+        .await
+        .unwrap_or(deployment);
 
     let project = services::get_project(&state.db, service.project_id)
         .await
@@ -124,6 +130,13 @@ pub async fn run(state: &SharedState, deployment_id: Uuid) -> Result<()> {
         )
         .execute(&state.db)
         .await?;
+        github::report(
+            state,
+            &service,
+            &deployment,
+            "failure",
+            format!("{error:#}"),
+        );
         notify::send(
             state,
             notify::Event {
@@ -139,6 +152,7 @@ pub async fn run(state: &SharedState, deployment_id: Uuid) -> Result<()> {
             .and_then(|m| m.lines().next())
             .map(|m| format!(" ({m})"))
             .unwrap_or_default();
+        github::report(state, &service, &deployment, "success", "Deployed".into());
         notify::send(
             state,
             notify::Event {
@@ -269,8 +283,11 @@ async fn build(
     }
     if let Some(token) = &service.git_token_enc {
         env.push(format!("JD_GIT_TOKEN={}", state.cipher.decrypt(token)?));
+    } else if let Some(token) = github::repo_token(state, &repo).await {
+        log.line("==> Cloning through the GitHub App");
+        env.push(format!("JD_GIT_TOKEN={token}"));
     }
-    let vars = services::env(state, service.id)
+    let vars = services::runtime_env(state, service)
         .await
         .map_err(|e| anyhow!("{e}"))?;
     env.push(format!(
@@ -312,7 +329,7 @@ async fn release(
     for volume in &volumes {
         docker::ensure_volume(&state.docker, &volume.name).await?;
     }
-    let env = services::env(state, service.id).await.map_err(err)?;
+    let env = services::runtime_env(state, service).await.map_err(err)?;
     let hosts = services::hosts(state, service, project, deployment.pr_number)
         .await
         .map_err(err)?;
@@ -377,7 +394,9 @@ async fn release(
             docker::remove(&state.docker, id).await?;
         }
         mark_released(state, service, deployment, image).await?;
-        log.line(format!("==> Ready. Runs on the schedule `{schedule}` (UTC)"));
+        log.line(format!(
+            "==> Ready. Runs on the schedule `{schedule}` (UTC)"
+        ));
         return Ok(());
     }
 
@@ -595,7 +614,7 @@ pub async fn remove_service(state: &SharedState, service_id: Uuid) -> Result<()>
     sqlx::query!("DELETE FROM services WHERE id = $1", service.id)
         .execute(&state.db)
         .await?;
-    services::audit(&state.db, "service.deleted", &service.name, None).await;
+    services::audit(&state.db, None, "finished deleting", &service.name, None).await;
     Ok(())
 }
 
@@ -612,7 +631,7 @@ pub async fn remove_project(state: &SharedState, project_id: Uuid) -> Result<()>
     sqlx::query!("DELETE FROM projects WHERE id = $1", project.id)
         .execute(&state.db)
         .await?;
-    services::audit(&state.db, "project.deleted", &project.name, None).await;
+    services::audit(&state.db, None, "finished deleting", &project.name, None).await;
     Ok(())
 }
 
