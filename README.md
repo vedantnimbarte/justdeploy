@@ -56,7 +56,8 @@ curl -fsSL https://raw.githubusercontent.com/vedantnimbarte/justdeploy/main/depl
 The installer writes everything to `/opt/justdeploy`, generates a `.env` with a master key and
 database password, starts a single-server Docker Swarm, and runs the containers.
 
-**4. Open `http://<server-ip>:8080`** and create the owner account.
+**4. Open `http://<server-ip>:8080`** and create the owner account. There is no default login: the
+first visit asks you to choose the owner's email and password. Invite everyone else under **Team**.
 
 **5. Deploy something.** Open **Templates**, pick *FastAPI + PostgreSQL*, and deploy it into a new
 project. In a minute or two the API is live at `api-<project>.<base domain>`. To deploy your own app,
@@ -142,11 +143,19 @@ cd /opt/justdeploy && sudo docker compose exec -T postgres pg_dump -U justdeploy
 
 Your apps' databases are backed up from each database's **Backups** tab.
 
-**Forgot the password:** this prints a new one for the first owner and turns off their two-factor
-sign-in (pass an email to reset someone else):
+**Forgot the email or password:** this prints `New password for <email>: <password>` for the first
+owner, turns off their two-factor sign-in and signs them out everywhere. Add an email to reset
+someone else (`reset-password sam@example.com`).
 
 ```bash
 cd /opt/justdeploy && sudo docker compose exec justdeploy justdeploy reset-password
+```
+
+Passwords are stored hashed, so they can only be reset, never read back. To list every account and
+its role:
+
+```bash
+cd /opt/justdeploy && sudo docker compose exec postgres psql -U justdeploy justdeploy -c "SELECT email, role FROM users"
 ```
 
 ## Command line
