@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE services SET on_status_page = (id = ANY($2)) WHERE project_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "UuidArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1d6e7d20305cbdd8f938dfe882c97212fd9b56100ba1a53dddd16d89d6b69225"
+}

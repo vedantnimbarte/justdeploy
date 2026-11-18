@@ -1,0 +1,37 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT 100 * avg(up::int) FILTER (WHERE ts > now() - interval '1 day') AS \"d1: f64\",\n                      100 * avg(up::int) FILTER (WHERE ts > now() - interval '7 days') AS \"d7: f64\",\n                      100 * avg(up::int) AS \"d90: f64\"\n               FROM uptime_checks WHERE service_id = $1 AND ts > now() - interval '90 days'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "d1: f64",
+        "type_info": "Numeric",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "d7: f64",
+        "type_info": "Numeric",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "d90: f64",
+        "type_info": "Numeric",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "c7ddef3f32250dc304496621da9b5a333aaac8aa1bcd7fefd9525625209c4cf0"
+}

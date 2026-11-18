@@ -354,6 +354,61 @@
             "name": "node_label"
           }
         }
+      },
+      {
+        "ordinal": 32,
+        "name": "on_status_page",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "on_status_page"
+          }
+        }
+      },
+      {
+        "ordinal": 33,
+        "name": "pitr_destination_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "pitr_destination_id"
+          }
+        }
+      },
+      {
+        "ordinal": 34,
+        "name": "pitr_base_backup_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "pitr_base_backup_at"
+          }
+        }
+      },
+      {
+        "ordinal": 35,
+        "name": "restore_from",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "restore_from"
+          }
+        }
+      },
+      {
+        "ordinal": 36,
+        "name": "restore_target",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "restore_target"
+          }
+        }
       }
     ],
     "parameters": {
@@ -414,6 +469,11 @@
       true,
       true,
       false,
+      true,
+      true,
+      false,
+      true,
+      true,
       true,
       true
     ]

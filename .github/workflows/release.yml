@@ -1,4 +1,4 @@
-# Publishes both images to GHCR, and the jd CLI for each platform to the GitHub
+# Publishes the three images to GHCR, and the jd CLI for each platform to the GitHub
 # release, when a version tag is pushed: git tag v0.1.0 && git push --tags
 name: Release
 
@@ -20,6 +20,8 @@ jobs:
             context: .
           - name: justdeploy-builder
             context: builder
+          - name: justdeploy-postgres
+            context: postgres
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -37,6 +39,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
+            type=raw,value=17,enable=${{ matrix.name == 'justdeploy-postgres' }}
       # ponytail: arm64 is built under QEMU, which is slow for the Rust image; switch
       # to native arm runners if release builds get too long.
       - uses: docker/build-push-action@v6

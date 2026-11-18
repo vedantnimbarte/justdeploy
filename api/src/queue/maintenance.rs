@@ -5,8 +5,9 @@ use crate::{
     backups, cluster,
     docker::{self, LABEL_KIND, LABEL_SERVICE},
     error::Result,
-    host, metrics, notify, runs, services,
+    host, logs, metrics, notify, pitr, runs, services,
     state::SharedState,
+    uptime, usage,
 };
 use std::{collections::HashSet, future::Future, time::Duration};
 use uuid::Uuid;
@@ -59,6 +60,30 @@ pub fn spawn(state: SharedState) {
         "scheduled runs",
         Duration::from_secs(60),
         runs::schedule_due,
+    );
+    every(
+        state.clone(),
+        "log collection",
+        Duration::from_secs(30),
+        logs::collect,
+    );
+    every(
+        state.clone(),
+        "uptime checks",
+        Duration::from_secs(60),
+        uptime::check,
+    );
+    every(
+        state.clone(),
+        "usage rollup",
+        Duration::from_secs(60 * 60),
+        usage::rollup,
+    );
+    every(
+        state.clone(),
+        "point-in-time base backups",
+        Duration::from_secs(10 * 60),
+        pitr::base_backups,
     );
     every(state, "cleanup", Duration::from_secs(60 * 60), cleanup);
 }
@@ -182,6 +207,13 @@ async fn cleanup(state: SharedState) -> Result<()> {
     sqlx::query!("DELETE FROM host_samples WHERE ts < now() - interval '24 hours'")
         .execute(&state.db)
         .await?;
+    sqlx::query!("DELETE FROM usage_hourly WHERE hour < now() - interval '90 days'")
+        .execute(&state.db)
+        .await?;
+    sqlx::query!("DELETE FROM uptime_checks WHERE ts < now() - interval '90 days'")
+        .execute(&state.db)
+        .await?;
+    logs::prune(&state).await?;
     sqlx::query!("DELETE FROM sessions WHERE expires_at < now()")
         .execute(&state.db)
         .await?;

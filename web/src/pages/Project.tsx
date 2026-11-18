@@ -1,17 +1,22 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { api, kindLabel, timeAgo, triggerLabel, type Project, type Service } from "../api";
 import { useMe } from "../me";
-import { Badge, Band, Button, ButtonLink, ConfirmDelete, EmptyState, ErrorText, PageHeader, Segmented, StatusDot } from "../ui";
+import { Badge, Band, Button, ButtonLink, ConfirmDelete, EmptyState, ErrorText, PageHeader, Segmented, StatusDot, Tabs } from "../ui";
 import { Canvas } from "./Canvas";
 import { baseName, EnvironmentBar } from "./Environments";
 import { EnvEditor } from "./service/Env";
+import Uptime from "./project/Uptime";
+import Usage from "./project/Usage";
+
+type ProjectTab = "services" | "usage" | "uptime" | "variables";
 
 export default function ProjectPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const { can } = useMe();
+  const [params, setParams] = useSearchParams();
   const [deleting, setDeleting] = useState(false);
   const [view, setView] = useState<"list" | "canvas">(() => {
     try {
@@ -46,6 +51,14 @@ export default function ProjectPage() {
       </Band>
     );
   const p = project.data;
+  const tabs: { id: ProjectTab; label: string }[] = [
+    { id: "services", label: "Services" },
+    { id: "usage", label: "Usage" },
+    { id: "uptime", label: "Uptime" },
+    ...(can("member") ? [{ id: "variables" as ProjectTab, label: "Shared variables" }] : []),
+  ];
+  const requested = params.get("tab") as ProjectTab | null;
+  const tab = tabs.some((t) => t.id === requested) ? (requested as ProjectTab) : "services";
 
   return (
     <>
@@ -66,44 +79,12 @@ export default function ProjectPage() {
       >
         <EnvironmentBar project={p} />
       </PageHeader>
+      <Tabs<ProjectTab> tabs={tabs} active={tab} onChange={(t) => setParams({ tab: t }, { replace: true })} />
       <Band>
-        {p.services.length > 0 && (
-          <div className="mb-4 flex justify-end">
-            <Segmented
-              label="Show services as"
-              value={view}
-              onChange={pickView}
-              options={[
-                { value: "list", label: "List" },
-                { value: "canvas", label: "Canvas" },
-              ]}
-            />
-          </div>
-        )}
-        {p.services.length === 0 ? (
-          <EmptyState title="This project is empty" action={can("member") && <ButtonLink to={`/projects/${id}/new`}>Add service</ButtonLink>}>
-            Add an app from a Git repository, a Docker image, or a database.
-          </EmptyState>
-        ) : view === "canvas" ? (
-          <Canvas projectId={p.id} services={p.services} />
-        ) : (
-          <div className="overflow-hidden rounded-panel border border-line bg-surface">
-            <div className="hidden grid-cols-[minmax(0,1.1fr)_8rem_minmax(0,1.2fr)_minmax(0,1.3fr)] gap-6 border-b border-line bg-subtle px-5 py-2.5 text-[13px] font-medium text-muted lg:grid">
-              <span>Service</span>
-              <span>Status</span>
-              <span>Address</span>
-              <span>Last deploy</span>
-            </div>
-            <ul>
-              {p.services.map((s) => (
-                <ServiceRow key={s.id} service={s} />
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {can("member") && (
-          <div className="mt-12 max-w-5xl">
+        {tab === "usage" && <Usage project={p} />}
+        {tab === "uptime" && <Uptime project={p} />}
+        {tab === "variables" && (
+          <div className="max-w-5xl">
             <EnvEditor
               url={`/projects/${id}/env`}
               title="Shared variables"
@@ -111,14 +92,55 @@ export default function ProjectPage() {
             />
           </div>
         )}
+        {tab === "services" && (
+          <>
+            {p.services.length > 0 && (
+              <div className="mb-4 flex justify-end">
+                <Segmented
+                  label="Show services as"
+                  value={view}
+                  onChange={pickView}
+                  options={[
+                    { value: "list", label: "List" },
+                    { value: "canvas", label: "Canvas" },
+                  ]}
+                />
+              </div>
+            )}
+            {p.services.length === 0 ? (
+              <EmptyState
+                title="This project is empty"
+                action={can("member") && <ButtonLink to={`/projects/${id}/new`}>Add service</ButtonLink>}
+              >
+                Add an app from a Git repository, a Docker image, or a database.
+              </EmptyState>
+            ) : view === "canvas" ? (
+              <Canvas projectId={p.id} services={p.services} />
+            ) : (
+              <div className="overflow-hidden rounded-panel border border-line bg-surface">
+                <div className="hidden grid-cols-[minmax(0,1.1fr)_8rem_minmax(0,1.2fr)_minmax(0,1.3fr)] gap-6 border-b border-line bg-subtle px-5 py-2.5 text-[13px] font-medium text-muted lg:grid">
+                  <span>Service</span>
+                  <span>Status</span>
+                  <span>Address</span>
+                  <span>Last deploy</span>
+                </div>
+                <ul>
+                  {p.services.map((s) => (
+                    <ServiceRow key={s.id} service={s} />
+                  ))}
+                </ul>
+              </div>
+            )}
 
-        {can("admin") && (
-          <div className="mt-12 flex flex-wrap items-center justify-between gap-4 border-t border-line pt-6">
-            <p className="text-sm text-muted">Deleting the project removes every service in it, including database data.</p>
-            <Button variant="danger" onClick={() => setDeleting(true)}>
-              Delete project
-            </Button>
-          </div>
+            {can("admin") && (
+              <div className="mt-12 flex flex-wrap items-center justify-between gap-4 border-t border-line pt-6">
+                <p className="text-sm text-muted">Deleting the project removes every service in it, including database data.</p>
+                <Button variant="danger" onClick={() => setDeleting(true)}>
+                  Delete project
+                </Button>
+              </div>
+            )}
+          </>
         )}
       </Band>
       <ConfirmDelete
@@ -127,8 +149,8 @@ export default function ProjectPage() {
         what="project"
         consequence={
           <p>
-            Every service in <strong className="text-fg">{p.name}</strong> is removed, including database volumes. Backups
-            already uploaded are kept. This cannot be undone.
+            Every service in <strong className="text-fg">{p.name}</strong> is removed, including database volumes. Backups already uploaded
+            are kept. This cannot be undone.
           </p>
         }
         busy={remove.isPending}

@@ -11,6 +11,10 @@ pub struct Project {
     pub environment: String,
     /// The production project this environment was made from.
     pub base_id: Option<Uuid>,
+    /// Its public status page is published.
+    pub status_page: bool,
+    /// A custom hostname for the status page, besides status-<project>.<base domain>.
+    pub status_domain: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -58,6 +62,14 @@ pub struct Service {
     pub node_id: Option<String>,
     /// `key=value`: run only on servers with that label.
     pub node_label: Option<String>,
+    /// Listed on its project's public status page.
+    pub on_status_page: bool,
+    /// Postgres point-in-time recovery: the S3 destination its write-ahead log streams to.
+    pub pitr_destination_id: Option<Uuid>,
+    pub pitr_base_backup_at: Option<DateTime<Utc>>,
+    /// A database made from another's history at `restore_target`, filled before it first starts.
+    pub restore_from: Option<Uuid>,
+    pub restore_target: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize)]

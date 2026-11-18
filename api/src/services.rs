@@ -446,6 +446,9 @@ pub struct NewService {
     pub volumes: Vec<String>,
     pub pre_deploy_command: Option<String>,
     pub cron_schedule: Option<String>,
+    /// A database made from another's history: (source, moment). Never from requests.
+    #[serde(skip)]
+    pub restore: Option<(Uuid, chrono::DateTime<chrono::Utc>)>,
 }
 
 /// Empty and blank strings mean "not set".
@@ -546,9 +549,10 @@ pub async fn create_service(
         r#"
         INSERT INTO services (id, project_id, name, kind, repo_url, branch, root_dir, git_token_enc,
             build_type, dockerfile_path, image, engine, port, public, health_path, cpu_millis,
-            memory_mb, webhook_secret, pre_deploy_command, cron_schedule)
+            memory_mb, webhook_secret, pre_deploy_command, cron_schedule, restore_from,
+            restore_target)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-            $19, $20)
+            $19, $20, $21, $22)
         RETURNING *
         "#,
         Uuid::new_v4(),
@@ -580,6 +584,8 @@ pub async fn create_service(
         random_string(32),
         optional_text(new.pre_deploy_command.clone()),
         cron_schedule,
+        new.restore.map(|(source, _)| source),
+        new.restore.map(|(_, at)| at),
     )
     .fetch_one(&mut *tx)
     .await?;

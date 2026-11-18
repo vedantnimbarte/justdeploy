@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE services SET pitr_destination_id = $2, pitr_base_backup_at = NULL WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6201bcec32a67f2c4aa13c1b283fb4ecf0bd76ba582ec7526e753bda6e8ff234"
+}

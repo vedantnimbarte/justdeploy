@@ -41,6 +41,7 @@ who may do what, not for hosting strangers.
 - [Backups and restore](#backups-and-restore)
 - [Runs and cron jobs](#runs-and-cron-jobs)
 - [Logs, metrics and the terminal](#logs-metrics-and-the-terminal)
+- [Usage, uptime and status pages](#usage-uptime-and-status-pages)
 - [Team, roles and access](#team-roles-and-access)
 - [Command line: jd](#command-line-jd)
 - [Notifications](#notifications)
@@ -440,6 +441,23 @@ backup and written to the audit log.
 Every engine has been tested with a full round trip (write, back up, change, restore, verify) against
 both an S3-compatible store and a local folder.
 
+### Point-in-time recovery (PostgreSQL)
+
+On a PostgreSQL database's **Backups** tab, *Point-in-time recovery* → pick an S3 destination →
+*Turn on*. The database is redeployed on `justdeploy-postgres`, the official `postgres:17-alpine`
+image with [wal-g](https://github.com/wal-g/wal-g) added, with `archive_mode` on: every change is
+pushed to `<prefix>/pitr/<service id>` within a minute (`archive_timeout` is 60 seconds). A full base
+backup is taken within ten minutes, then daily, and the last 7 are kept. The card shows when the last
+change was archived, the last base backup, failed archive attempts, and the earliest moment you can
+restore to.
+
+**Restore to a moment.** Pick a date and time (at least a minute ago) and *Restore into a new
+database*. A new service named `<name>-at-<MMDD-HHMM>` is created in the same project with the same
+variables; before it starts, a helper container fetches the newest base backup from before that
+moment, replays the archived changes up to it, and promotes it. The original database is untouched:
+check the copy, then point your app at it or copy what you need back. Turning archiving off redeploys
+the database on the stock image; what was archived stays in the bucket.
+
 ---
 
 ## Runs and cron jobs
@@ -460,11 +478,35 @@ host port or have previews.
 
 ## Logs, metrics and the terminal
 
-- **Logs** follows the live container's output (the last 500 lines, then live).
+- **Logs** follows the live container's output (the last 500 lines, then live). *Search* looks
+  through everything production services have printed, kept in justdeploy's Postgres for
+  `JD_LOG_DAYS` (7) days: any text, case-insensitive, over the last hour to 30 days, newest first,
+  200 lines at a time.
 - **Metrics** charts CPU, memory (excluding reclaimable page cache) and network rate per service.
   Samples are taken every 30 seconds and kept for 24 hours.
 - **Terminal** opens a shell (`bash` if present, otherwise `sh`) inside the running container. Each
   session is written to the audit log.
+
+---
+
+## Usage, uptime and status pages
+
+**Usage.** A project's **Usage** tab charts CPU (100% is one core), memory and disk per service,
+every copy added up, over the last day (15-minute steps), week or 90 days. Samples are rolled up into
+hourly averages kept for 90 days; disk is the size of each service's volumes, measured hourly. A
+table under the charts gives each service's averages for the range.
+
+**Uptime.** Every public service is requested once a minute at its health check path (or `/`) on its
+generated hostname. An answer below 500 within 10 seconds is up. Two misses in a row send
+`service.down` to your notification channels, and the first success after that sends
+`service.recovered`. The **Uptime** tab shows each service's state and response time, uptime over 24
+hours, 7 and 90 days, a bar per day for 90 days, and recent incidents. Checks are kept 90 days.
+
+**Status page.** On the same tab, *Publish the status page* and tick the services to show. The page
+needs no sign-in and is served at `<public URL>/status/<project>`, at
+`status-<project>.<base domain>`, and at a custom domain if you set one (add a CNAME pointing at the
+`status-` hostname; the tab shows whether it's connected). It shows an overall state and each
+service's 90 days, and refreshes itself every minute.
 
 ---
 
@@ -582,7 +624,8 @@ fails, or a service crashes (at most one crash message per service an hour). Tic
 deploys succeed* for successful deploys too. A test message is sent when you add a channel, and the
 channel is only saved if it arrives. Webhook URLs are stored encrypted. Any URL receives a JSON
 `POST` of `{event, text, url}`, where `event` is `deploy.failed`, `deploy.succeeded`,
-`service.crashed`, `run.failed` or `backup.failed`.
+`service.crashed`, `service.down`, `service.recovered`, `run.failed` or `backup.failed`. A public
+service going down (two failed uptime checks in a row) and coming back are always sent.
 
 ---
 
@@ -686,6 +729,8 @@ The control plane reads its configuration from the environment (`.env` next to t
 | `JD_PORT` | `8080` | Host port (or `ip:port`) the dashboard is published on |
 | `JD_VERSION` | `latest` | Image tag of justdeploy to run |
 | `JD_BUILDER_IMAGE` | `ghcr.io/vedantnimbarte/justdeploy-builder:latest` | Image used for builds and health checks |
+| `JD_POSTGRES_IMAGE` | `ghcr.io/vedantnimbarte/justdeploy-postgres:17` | PostgreSQL with wal-g, used for databases with point-in-time recovery on |
+| `JD_LOG_DAYS` | `7` | Days service logs are kept for search (1 to 365) |
 | `JD_TEMPLATES_REPO` | this repository | Repository code templates build from |
 | `JD_TEMPLATES_BRANCH` | `main` | Its branch |
 | `JD_BACKUP_DIR` | `/backups` | Root of "folder on this server" backup destinations |
@@ -731,6 +776,10 @@ authenticate by signature.
 | `POST` | `/projects/{id}/environments` | `{environment, branch?}`: a new environment copied from this one; returns it |
 | `POST` | `/projects/{id}/sync` | `{from}`: copy settings from another environment; returns `{updated, added}` |
 | `GET` | `/projects/{id}/graph` | `[{from, to, keys}]`: which services reference which |
+| `GET` | `/projects/{id}/usage?range=day\|week\|quarter` | `[{t, service_id, cpu, memory, disk}]` |
+| `GET` | `/projects/{id}/uptime` | Each public service: state, latency, uptime windows, 90 daily values, incidents |
+| `PUT` | `/projects/{id}/status-page` | `{enabled, domain, services: [id]}` |
+| `GET` | `/status/{project}` | No sign-in: a published status page |
 | `GET` `PATCH` `DELETE` | `/services/{id}` | Detail · update settings (redeploys) · delete |
 | `POST` | `/services/{id}/actions` | `{action: deploy | restart | stop | start}` |
 | `GET` | `/services/{id}/deployments` | Last 50 deployments |
@@ -744,6 +793,9 @@ authenticate by signature.
 | `GET` `POST` | `/services/{id}/backups` | List · back up now `{destination_id}` |
 | `GET` `PUT` | `/services/{id}/backup-schedule` | `{destination_id, cron, keep}` or `null` |
 | `POST` | `/backups/{id}/restore` | |
+| `GET` `PUT` | `/services/{id}/pitr` | Point-in-time recovery state · admin: `{destination_id}` or `null` (redeploys) |
+| `POST` | `/services/{id}/pitr/restore` | `{target}` (a time): creates and returns the restored copy |
+| `GET` | `/services/{id}/logs/search?q=&hours=24&before=id` | Kept log lines containing `q`, newest 200 |
 | `GET` `POST` `DELETE` | `/backup-destinations`, `/backup-destinations/{id}` | |
 | `GET` | `/deployments/{id}` · `/deployments/{id}/logs` | Build log as server-sent events; resumes from `Last-Event-ID` |
 | `POST` | `/deployments/{id}/rollback` | |
@@ -878,6 +930,10 @@ docker compose up -d justdeploy      # dashboard at http://localhost:8080
 | `api/src/backups.rs` | Destinations, schedules, backup and restore |
 | `api/src/templates.rs` | Template catalog and placeholder wiring |
 | `api/src/webhooks.rs` | Signature checks, push deploys, previews |
+| `api/src/pitr.rs` | Point-in-time recovery: wal-g settings, base backups, restoring a moment into a new database |
+| `api/src/logs.rs` | Kept logs: a follower per production workload, search, pruning |
+| `api/src/uptime.rs` | Uptime checks, incidents, down and recovered notifications, status pages |
+| `api/src/usage.rs` | Hourly usage rollups, volume sizes, the usage series |
 | `api/src/runs.rs` | One-off and scheduled runs of a service's image |
 | `api/src/notify.rs` | Notification channels and delivery to Slack, Discord or a webhook |
 | `api/src/auth.rs`, `crypto.rs` | People and roles, sessions, API tokens, invites, two-factor, rate limit; AES-GCM secrets |
@@ -885,6 +941,7 @@ docker compose up -d justdeploy      # dashboard at http://localhost:8080
 | `api/src/github.rs` | The GitHub App: manifest flow, installation tokens, repositories, app webhooks, commit statuses |
 | `cli/src/main.rs` | `jd`: the command-line client over the API |
 | `api/migrations/` | Schema |
+| `postgres/` | The `justdeploy-postgres` image: `postgres:17-alpine` plus a static wal-g |
 | `builder/` | The builder image: `build.sh` (clone, Dockerfile or Railpack) and `healthcheck.sh` |
 | `web/src/` | The dashboard: `ui.tsx` (design system components), `api.ts` (typed client), `pages/` |
 | `templates/catalog.json` | Templates |
@@ -911,6 +968,7 @@ brand colour; marks too dark to read on dark surfaces use the text colour instea
 api/          Rust control plane (axum, sqlx, bollard)
 web/          React dashboard (Vite, TypeScript, Tailwind, TanStack Query)
 builder/      Builder image: git, Docker CLI + BuildKit, Railpack
+postgres/     PostgreSQL image with wal-g, for point-in-time recovery
 templates/    Template catalog
 examples/     Example apps the code templates build
 cli/          jd, the command-line client
@@ -946,20 +1004,29 @@ Dockerfile               Production image (API + dashboard)
 - **Restores** handle backups up to 8 GiB compressed.
 - **Redis** keeps up to a minute of writes at risk (RDB snapshots, no AOF).
 - **Notifications** go to Slack, Discord or a webhook; there is no email.
+- **Point-in-time recovery** is PostgreSQL only and needs an S3-compatible destination. Restores
+  always create a new database; replacing the original in place is left to you.
+- **Disk usage** reads volume sizes from Docker 29 or newer; older Docker shows no disk.
+- **Kept logs** cover production services, not previews or one-off runs, and are stored in
+  justdeploy's own Postgres, so a chatty service grows it: lower `JD_LOG_DAYS` if it does.
+- **Uptime checks** run from the main server against generated hostnames, so they test routing on
+  that server rather than reachability from the internet. They are off while the base domain is
+  `localhost`.
 
 ---
 
 ## Releasing
 
-Pushing a version tag builds both images for amd64 and arm64 and publishes them to GitHub Container
-Registry as `ghcr.io/vedantnimbarte/justdeploy` and `ghcr.io/vedantnimbarte/justdeploy-builder`,
-tagged with the version, `major.minor` and `latest`:
+Pushing a version tag builds the three images for amd64 and arm64 and publishes them to GitHub
+Container Registry as `ghcr.io/vedantnimbarte/justdeploy`, `ghcr.io/vedantnimbarte/justdeploy-builder`
+and `ghcr.io/vedantnimbarte/justdeploy-postgres`, tagged with the version, `major.minor` and `latest`
+(and `17`, the PostgreSQL major, for the last):
 
 ```bash
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
-After the first release, make both packages public in GitHub (*Packages → Package settings → Change
+After the first release, make the three packages public in GitHub (*Packages → Package settings → Change
 visibility*) so servers can pull them without logging in.
 
 ---

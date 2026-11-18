@@ -1,0 +1,58 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT date_trunc($3, u.hour) AS \"t!\", u.service_id,\n                          avg(u.cpu_percent) AS \"cpu!\", avg(u.memory_bytes)::bigint AS \"memory!\",\n                          max(u.disk_bytes) AS \"disk!\"\n                   FROM usage_hourly u JOIN services s ON s.id = u.service_id\n                   WHERE s.project_id = $1 AND u.hour > now() - make_interval(days => $2)\n                   GROUP BY 1, 2 ORDER BY 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "t!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "service_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "usage_hourly",
+            "name": "service_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "cpu!",
+        "type_info": "Float8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "memory!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "disk!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      false,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "1b704ced9c1084bd2c66b310eb13ace49bf977445ded6e712216eeaeb07dc33a"
+}

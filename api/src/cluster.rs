@@ -55,6 +55,11 @@ const AGENT_PORT: u16 = 2375;
 const LABEL_REGISTRY_HOST: &str = "jd.registry-host";
 
 static SELF_NODE: OnceLock<String> = OnceLock::new();
+/// The control plane's container name, when it runs in one: how the status
+/// page proxy on `jd-mesh` reaches it.
+static CONTROL_PLANE: OnceLock<String> = OnceLock::new();
+const STATUS: &str = "jd-status";
+const LABEL_STATUS_HOSTS: &str = "jd.status-hosts";
 
 /// This server's Swarm node id: the one the control plane runs on.
 pub fn self_node() -> &'static str {
@@ -111,7 +116,13 @@ async fn join_networks(state: &SharedState) {
     let Ok(me) = state.docker.inspect_container(&hostname, None).await else {
         return;
     };
-    connect(state, CONTROL, &me.id.unwrap_or_default()).await;
+    let id = me.id.unwrap_or_default();
+    connect(state, CONTROL, &id).await;
+    // Status pages reach the control plane over jd-mesh.
+    connect(state, MESH, &id).await;
+    if let Some(name) = me.name.as_deref() {
+        let _ = CONTROL_PLANE.set(name.trim_start_matches('/').to_string());
+    }
     let project = me
         .config
         .and_then(|c| c.labels)
@@ -174,6 +185,19 @@ pub async fn refresh(state: SharedState) -> Result<()> {
     for agent in agents {
         if !wanted.iter().any(|n| names::node_agent(n) == agent.name) {
             docker::remove_service(&state.docker, &agent.name).await?;
+        }
+    }
+    if let Some(control_plane) = CONTROL_PLANE.get() {
+        let hosts = crate::uptime::status_hosts(&state).await?.join(",");
+        let current = docker::workloads(&state.docker, &[(LABEL_KIND, "status")]).await?;
+        let shown = current.first().and_then(|s| s.label(LABEL_STATUS_HOSTS));
+        if hosts.is_empty() {
+            if !current.is_empty() {
+                docker::remove_service(&state.docker, STATUS).await?;
+            }
+        } else if shown != Some(hosts.as_str()) {
+            let spec = status_spec(&state, control_plane, &hosts);
+            docker::create_service(&state.docker, spec, None).await?;
         }
     }
     if state.config.tls() {
@@ -244,6 +268,72 @@ fn agent_spec(image: String, node: &str) -> ServiceSpec {
             }),
             networks: Some(vec![NetworkAttachmentConfig {
                 target: Some(CONTROL.into()),
+                ..Default::default()
+            }]),
+            restart_policy: restart_always(),
+            log_driver: bounded_logs(),
+            ..Default::default()
+        }),
+        mode: replicated(1),
+        ..Default::default()
+    }
+}
+
+/// Routes every published status page hostname to the control plane, which
+/// isn't a Swarm service itself, through a forwarder on `jd-mesh`.
+fn status_spec(state: &SharedState, control_plane: &str, hosts: &str) -> ServiceSpec {
+    let rule = hosts
+        .split(',')
+        .map(|h| format!("Host(`{h}`)"))
+        .collect::<Vec<_>>()
+        .join(" || ");
+    let r = STATUS;
+    let mut labels = HashMap::from([
+        (MANAGED.to_string(), "true".to_string()),
+        (LABEL_KIND.to_string(), "status".to_string()),
+        (LABEL_STATUS_HOSTS.to_string(), hosts.to_string()),
+        ("traefik.enable".to_string(), "true".to_string()),
+        ("traefik.swarm.network".to_string(), MESH.to_string()),
+        (format!("traefik.http.routers.{r}.rule"), rule),
+        (
+            format!("traefik.http.services.{r}.loadbalancer.server.port"),
+            "8080".to_string(),
+        ),
+    ]);
+    if state.config.tls() {
+        labels.insert(
+            format!("traefik.http.routers.{r}.entrypoints"),
+            "websecure".into(),
+        );
+        labels.insert(
+            format!("traefik.http.routers.{r}.tls.certresolver"),
+            "le".into(),
+        );
+    } else {
+        labels.insert(
+            format!("traefik.http.routers.{r}.entrypoints"),
+            "web".into(),
+        );
+    }
+    ServiceSpec {
+        name: Some(STATUS.into()),
+        labels: Some(labels),
+        task_template: Some(TaskSpec {
+            container_spec: Some(TaskSpecContainerSpec {
+                image: Some(state.config.builder_image.clone()),
+                args: Some(vec![
+                    "socat".into(),
+                    "TCP-LISTEN:8080,fork,reuseaddr".into(),
+                    format!("TCP:{control_plane}:8080"),
+                ]),
+                ..Default::default()
+            }),
+            placement: Some(TaskSpecPlacement {
+                constraints: Some(vec![format!("node.id=={}", self_node())]),
+                ..Default::default()
+            }),
+            networks: Some(vec![NetworkAttachmentConfig {
+                target: Some(MESH.into()),
                 ..Default::default()
             }]),
             restart_policy: restart_always(),

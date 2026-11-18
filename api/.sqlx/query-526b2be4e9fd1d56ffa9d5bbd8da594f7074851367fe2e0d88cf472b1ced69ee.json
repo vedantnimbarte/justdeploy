@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM usage_hourly WHERE hour < now() - interval '90 days'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "526b2be4e9fd1d56ffa9d5bbd8da594f7074851367fe2e0d88cf472b1ced69ee"
+}

@@ -134,6 +134,7 @@ pub async fn deploy(state: &SharedState, id: &str, target: DeployTemplate) -> Re
                 volumes: spec.volumes.clone(),
                 pre_deploy_command: None,
                 cron_schedule: None,
+                restore: None,
             },
         )
         .await?;

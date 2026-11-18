@@ -83,6 +83,19 @@ pub fn router(state: SharedState) -> Router {
         )
         .route("/projects/{id}/sync", post(projects::sync_environment))
         .route("/projects/{id}/graph", get(projects::graph))
+        .route("/projects/{id}/usage", get(projects::usage))
+        .route("/projects/{id}/uptime", get(projects::uptime))
+        .route(
+            "/projects/{id}/status-page",
+            put(projects::configure_status_page),
+        )
+        .route("/status/{name}", get(projects::public_status))
+        .route("/services/{id}/logs/search", get(projects::search_logs))
+        .route(
+            "/services/{id}/pitr",
+            get(projects::pitr_status).put(projects::configure_pitr),
+        )
+        .route("/services/{id}/pitr/restore", post(projects::pitr_restore))
         .route(
             "/services/{id}",
             get(projects::get_service)

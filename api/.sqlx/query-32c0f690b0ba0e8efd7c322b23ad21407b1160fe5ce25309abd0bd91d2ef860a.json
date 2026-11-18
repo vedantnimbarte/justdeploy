@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM uptime_checks WHERE ts < now() - interval '90 days'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "32c0f690b0ba0e8efd7c322b23ad21407b1160fe5ce25309abd0bd91d2ef860a"
+}

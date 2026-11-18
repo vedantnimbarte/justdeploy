@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT ts FROM uptime_checks WHERE service_id = $1 AND NOT up\n               AND ts > now() - interval '90 days' ORDER BY ts",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ts",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "uptime_checks",
+            "name": "ts"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "4b4daa54e5d44623f91da15611756cb02e21f0bfa657ec210d571dc5848de8c4"
+}

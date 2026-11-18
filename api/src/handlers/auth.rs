@@ -21,13 +21,20 @@ use uuid::Uuid;
 pub struct Status {
     setup_required: bool,
     authenticated: bool,
+    /// Set when this hostname is a project's status page: the project to show.
+    status_page: Option<String>,
 }
 
 /// Lets the dashboard decide between the setup screen, the login screen and the app.
 pub async fn status(State(state): State<SharedState>, headers: HeaderMap) -> Result<Json<Status>> {
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or_default();
     Ok(Json(Status {
         setup_required: !auth::users_exist(&state.db).await?,
         authenticated: auth::current_user(&state, &headers).await?.is_some(),
+        status_page: crate::uptime::page_for_host(&state, host).await?,
     }))
 }
 

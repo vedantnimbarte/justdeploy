@@ -1,13 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { Link } from "react-router";
-import { api, bytes, timeAgo, type Backup, type Destination, type Schedule, type ServiceDetail } from "../../api";
+import { Link, useNavigate } from "react-router";
+import { api, bytes, timeAgo, type Backup, type Destination, type PitrStatus, type Schedule, type ServiceDetail } from "../../api";
 import { Button, Card, EmptyState, ErrorText, Field, Input, Modal, SectionTitle, Select, StatusDot, useToast } from "../../ui";
 
 export default function Backups({ service }: { service: ServiceDetail }) {
   const toast = useToast();
   const queryClient = useQueryClient();
-  const destinations = useQuery({ queryKey: ["destinations"], queryFn: () => api.get<Destination[]>("/backup-destinations") });
+  const destinations = useQuery({
+    queryKey: ["destinations"],
+    queryFn: () => api.get<Destination[]>("/backup-destinations"),
+  });
   const backups = useQuery({
     queryKey: ["backups", service.id],
     queryFn: () => api.get<Backup[]>(`/services/${service.id}/backups`),
@@ -25,7 +28,10 @@ export default function Backups({ service }: { service: ServiceDetail }) {
   }, [destinations.data, destination]);
 
   const backupNow = useMutation({
-    mutationFn: () => api.post(`/services/${service.id}/backups`, { destination_id: destination }),
+    mutationFn: () =>
+      api.post(`/services/${service.id}/backups`, {
+        destination_id: destination,
+      }),
     onSuccess: () => {
       toast("Backup started");
       queryClient.invalidateQueries({ queryKey: ["backups", service.id] });
@@ -45,8 +51,7 @@ export default function Backups({ service }: { service: ServiceDetail }) {
   if (destinations.data && destinations.data.length === 0) {
     return (
       <EmptyState title="No backup destination yet" action={<Link to="/settings">Add one in Settings</Link>}>
-        Backups go to S3-compatible storage (AWS, Cloudflare R2, Backblaze B2, MinIO) or to a folder on this
-        server.
+        Backups go to S3-compatible storage (AWS, Cloudflare R2, Backblaze B2, MinIO) or to a folder on this server.
       </EmptyState>
     );
   }
@@ -91,6 +96,7 @@ export default function Backups({ service }: { service: ServiceDetail }) {
         </Card>
       </div>
       <div className="grid content-start gap-8">
+        {service.engine === "postgres" && destinations.data && <Pitr service={service} destinations={destinations.data} />}
         <Card>
           <h3 className="mb-4 text-lg font-semibold">Back up now</h3>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
@@ -147,7 +153,11 @@ function ScheduleForm({
   const toast = useToast();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<Schedule>(
-    current ?? { destination_id: destinations[0]?.id ?? "", cron: "0 3 * * *", keep: 7 },
+    current ?? {
+      destination_id: destinations[0]?.id ?? "",
+      cron: "0 3 * * *",
+      keep: 7,
+    },
   );
   const save = useMutation({
     mutationFn: (value: Schedule | null) => api.put(`/services/${service.id}/backup-schedule`, value),
@@ -192,6 +202,117 @@ function ScheduleForm({
           )}
         </div>
       </div>
+    </Card>
+  );
+}
+
+/** Local date-time for a datetime-local input. */
+const toLocalInput = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+
+/** Continuous archiving with wal-g, and restoring any moment into a new database. Postgres only. */
+function Pitr({ service, destinations }: { service: ServiceDetail; destinations: Destination[] }) {
+  const toast = useToast();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const s3 = destinations.filter((d) => d.kind === "s3");
+  const status = useQuery({
+    queryKey: ["pitr", service.id],
+    queryFn: () => api.get<PitrStatus>(`/services/${service.id}/pitr`),
+    refetchInterval: 30_000,
+  });
+  const [choice, setChoice] = useState(service.pitr_destination_id ?? s3[0]?.id ?? "");
+  const [target, setTarget] = useState(() => toLocalInput(new Date(Date.now() - 5 * 60_000)));
+  const configure = useMutation({
+    mutationFn: (destination_id: string | null) => api.put(`/services/${service.id}/pitr`, { destination_id }),
+    onSuccess: (_, id) => {
+      toast(id ? "Archiving on; the database is redeploying" : "Archiving off; the database is redeploying");
+      queryClient.invalidateQueries({ queryKey: ["service", service.id] });
+      queryClient.invalidateQueries({ queryKey: ["pitr", service.id] });
+    },
+    onError: (e) => toast(e.message, true),
+  });
+  const restore = useMutation({
+    mutationFn: () =>
+      api.post<{ id: string; name: string }>(`/services/${service.id}/pitr/restore`, { target: new Date(target).toISOString() }),
+    onSuccess: (created) => {
+      toast(`Restoring into ${created.name}`);
+      navigate(`/services/${created.id}`);
+    },
+    onError: (e) => toast(e.message, true),
+  });
+
+  const p = status.data;
+  const on = Boolean(service.pitr_destination_id);
+  return (
+    <Card>
+      <h3 className="mb-1 text-lg font-semibold">Point-in-time recovery</h3>
+      <p className="mb-4 text-sm text-muted">
+        Every change is archived to S3 within a minute, with a full base backup each night (the last 7 are kept). Restoring picks any moment
+        since the oldest base backup and builds a new database from it; this one stays as it is.
+      </p>
+      {!on ? (
+        s3.length === 0 ? (
+          <p className="text-sm">
+            Needs an S3 destination. <Link to="/settings">Add one in Settings</Link>.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <Field label="Archive to" className="flex-1">
+              <Select value={choice} onChange={(e) => setChoice(e.target.value)}>
+                {s3.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Button busy={configure.isPending} disabled={!choice} onClick={() => configure.mutate(choice)}>
+              Turn on
+            </Button>
+          </div>
+        )
+      ) : (
+        <div className="grid gap-4">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+            <dt className="text-muted">Archiving to</dt>
+            <dd>{destinations.find((d) => d.id === service.pitr_destination_id)?.name}</dd>
+            <dt className="text-muted">Last change archived</dt>
+            <dd>{p?.archived_at ? timeAgo(p.archived_at) : "Not yet"}</dd>
+            <dt className="text-muted">Last base backup</dt>
+            <dd>{p?.base_backup_at ? timeAgo(p.base_backup_at) : "Not yet, within 10 minutes"}</dd>
+            <dt className="text-muted">Restorable from</dt>
+            <dd>{p?.earliest ? new Date(p.earliest).toLocaleString() : "After the first base backup"}</dd>
+          </dl>
+          {p && p.failed_count > 0 && (
+            <p className="text-sm text-err">
+              {p.failed_count} archive attempt{p.failed_count === 1 ? "" : "s"} failed
+              {p.failed_at && `, last ${timeAgo(p.failed_at)}`}. Check the destination's credentials and the database's logs.
+            </p>
+          )}
+          {p?.error && <p className="text-sm text-err">{p.error}</p>}
+          {p?.earliest && (
+            <div className="flex flex-col gap-3 border-t border-line pt-4 sm:flex-row sm:items-end">
+              <Field label="Restore to (your time)" className="flex-1">
+                <Input
+                  type="datetime-local"
+                  value={target}
+                  min={toLocalInput(new Date(p.earliest))}
+                  max={toLocalInput(new Date())}
+                  onChange={(e) => setTarget(e.target.value)}
+                />
+              </Field>
+              <Button variant="secondary" busy={restore.isPending} disabled={!target} onClick={() => restore.mutate()}>
+                Restore into a new database
+              </Button>
+            </div>
+          )}
+          <div>
+            <Button variant="tertiary" className="-ml-3.5 h-8" busy={configure.isPending} onClick={() => configure.mutate(null)}>
+              Turn off archiving
+            </Button>
+          </div>
+        </div>
+      )}
     </Card>
   );
 }

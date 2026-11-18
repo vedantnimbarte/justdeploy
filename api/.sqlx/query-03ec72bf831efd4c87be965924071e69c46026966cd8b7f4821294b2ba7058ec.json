@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO usage_hourly (service_id, hour, cpu_percent, memory_bytes, net_rx_bytes, net_tx_bytes)\n               SELECT service_id, date_trunc('hour', now()) - make_interval(hours => $1),\n                      avg(cpu_percent), avg(memory_bytes)::bigint,\n                      greatest(max(net_rx_bytes) - min(net_rx_bytes), 0),\n                      greatest(max(net_tx_bytes) - min(net_tx_bytes), 0)\n               FROM metric_samples\n               WHERE ts >= date_trunc('hour', now()) - make_interval(hours => $1)\n                 AND ts < date_trunc('hour', now()) - make_interval(hours => $1 - 1)\n               GROUP BY service_id\n               ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "03ec72bf831efd4c87be965924071e69c46026966cd8b7f4821294b2ba7058ec"
+}

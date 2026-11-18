@@ -296,6 +296,128 @@ pub async fn graph(
     Ok(Json(services::project_graph(&state, id).await?))
 }
 
+#[derive(Deserialize)]
+pub struct UsageQuery {
+    /// day | week | quarter
+    range: Option<String>,
+}
+
+pub async fn usage(
+    _: Viewer,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+    axum::extract::Query(query): axum::extract::Query<UsageQuery>,
+) -> Result<Json<Vec<crate::usage::Point>>> {
+    services::get_project(&state.db, id).await?;
+    let range = query.range.as_deref().unwrap_or("day");
+    Ok(Json(crate::usage::series(&state, id, range).await?))
+}
+
+pub async fn uptime(
+    _: Viewer,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<crate::uptime::ServiceUptime>>> {
+    Ok(Json(crate::uptime::summary(&state, id, false).await?))
+}
+
+#[derive(Deserialize)]
+pub struct StatusPageSettings {
+    enabled: bool,
+    domain: Option<String>,
+    #[serde(default)]
+    services: Vec<Uuid>,
+}
+
+pub async fn configure_status_page(
+    _: Member,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<StatusPageSettings>,
+) -> Result<StatusCode> {
+    services::get_project(&state.db, id).await?;
+    crate::uptime::configure(&state, id, body.enabled, body.domain, &body.services).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// A published status page. No sign-in: it's public.
+pub async fn public_status(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Result<Json<crate::uptime::StatusPage>> {
+    Ok(Json(crate::uptime::status_page(&state, &name).await?))
+}
+
+#[derive(Deserialize)]
+pub struct LogSearch {
+    #[serde(default)]
+    q: String,
+    hours: Option<i32>,
+    before: Option<i64>,
+}
+
+pub async fn search_logs(
+    _: Viewer,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+    axum::extract::Query(query): axum::extract::Query<LogSearch>,
+) -> Result<Json<Vec<crate::logs::Line>>> {
+    services::get_service(&state.db, id).await?;
+    Ok(Json(
+        crate::logs::search(
+            &state,
+            id,
+            &query.q,
+            query.hours.unwrap_or(24),
+            query.before,
+        )
+        .await?,
+    ))
+}
+
+pub async fn pitr_status(
+    _: Viewer,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<crate::pitr::Status>> {
+    let service = services::get_service(&state.db, id).await?;
+    Ok(Json(crate::pitr::status(&state, &service).await?))
+}
+
+#[derive(Deserialize)]
+pub struct PitrSettings {
+    /// An S3 destination to archive to; null turns it off.
+    destination_id: Option<Uuid>,
+}
+
+pub async fn configure_pitr(
+    _: Admin,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<PitrSettings>,
+) -> Result<StatusCode> {
+    let service = services::get_service(&state.db, id).await?;
+    crate::pitr::configure(&state, &service, body.destination_id).await?;
+    Ok(StatusCode::ACCEPTED)
+}
+
+#[derive(Deserialize)]
+pub struct PitrRestore {
+    /// The moment to restore, any time zone.
+    target: chrono::DateTime<chrono::Utc>,
+}
+
+pub async fn pitr_restore(
+    _: Member,
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<PitrRestore>,
+) -> Result<(StatusCode, Json<Service>)> {
+    let source = services::get_service(&state.db, id).await?;
+    let restored = crate::pitr::restore(&state, &source, body.target).await?;
+    Ok((StatusCode::ACCEPTED, Json(restored)))
+}
+
 // ---------------------------------------------------------------- services
 
 pub async fn create_service(

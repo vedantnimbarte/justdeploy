@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE projects SET status_page = $2, status_domain = $3 WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Bool",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fefbd4eda323d80555344cabebfc0cc36b8999a8e72fc60dc2a1f71d1d56c4e2"
+}

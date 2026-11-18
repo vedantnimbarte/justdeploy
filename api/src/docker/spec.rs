@@ -33,6 +33,8 @@ pub struct Release<'a> {
     pub replicas: i64,
     /// Swarm placement constraints, like `node.id==abc`.
     pub constraints: Vec<String>,
+    /// The container's arguments, when they differ from the image's.
+    pub args: Option<Vec<String>>,
 }
 
 impl Release<'_> {
@@ -130,7 +132,7 @@ impl Release<'_> {
                     image: Some(self.image.to_string()),
                     env: Some(env),
                     labels: Some(container_labels),
-                    args: service.engine.as_deref().and_then(engines::command),
+                    args: self.args.clone(),
                     mounts: Some(
                         self.volumes
                             .iter()
@@ -453,6 +455,11 @@ pub(crate) mod tests {
             autoscale_cpu: 70,
             node_id: None,
             node_label: None,
+            on_status_page: false,
+            pitr_destination_id: None,
+            pitr_base_backup_at: None,
+            restore_from: None,
+            restore_target: None,
         }
     }
 
@@ -495,6 +502,7 @@ pub(crate) mod tests {
             tls: false,
             replicas: 2,
             constraints: vec!["node.id==n1".into()],
+            args: None,
         }
     }
 

@@ -87,6 +87,8 @@ export interface Service {
   node_id: string | null;
   /** key=value: only servers with that label. */
   node_label: string | null;
+  on_status_page: boolean;
+  pitr_destination_id: string | null;
   desired_state: "running" | "stopped" | "deleting";
   current_deployment_id: string | null;
   created_at: string;
@@ -109,6 +111,8 @@ export interface Project {
   services: Service[];
   /** Every environment of the project, production first. */
   environments: { id: string; environment: string }[];
+  status_page: boolean;
+  status_domain: string | null;
 }
 
 export interface Domain {
@@ -259,6 +263,52 @@ export interface ClusterServer {
     disk_total: number;
     sampled_at: string;
   } | null;
+}
+
+export interface UsagePoint {
+  t: string;
+  service_id: string;
+  /** Percent of one core, all copies added up. */
+  cpu: number;
+  memory: number;
+  disk: number;
+}
+
+export interface ServiceUptime {
+  id: string;
+  name: string;
+  url: string | null;
+  up: boolean | null;
+  latency_ms: number | null;
+  checked_at: string | null;
+  uptime_24h: number | null;
+  uptime_7d: number | null;
+  uptime_90d: number | null;
+  /** 90 days, oldest first. */
+  days: (number | null)[];
+  incidents: { from: string; to: string | null }[];
+}
+
+export interface StatusPageData {
+  title: string;
+  overall: "operational" | "degraded" | "down";
+  services: ServiceUptime[];
+}
+
+export interface PitrStatus {
+  destination_id: string | null;
+  base_backup_at: string | null;
+  earliest: string | null;
+  archived_at: string | null;
+  failed_count: number;
+  failed_at: string | null;
+  error: string | null;
+}
+
+export interface LogLine {
+  id: number;
+  ts: string;
+  line: string;
 }
 
 export interface DnsCheck {

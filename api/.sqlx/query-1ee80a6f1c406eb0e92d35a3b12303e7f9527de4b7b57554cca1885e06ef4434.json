@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (SELECT 1 FROM projects WHERE name = $1 AND status_page) AS \"p!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "p!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "1ee80a6f1c406eb0e92d35a3b12303e7f9527de4b7b57554cca1885e06ef4434"
+}

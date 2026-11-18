@@ -57,6 +57,28 @@
             "name": "base_id"
           }
         }
+      },
+      {
+        "ordinal": 5,
+        "name": "status_page",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "status_page"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "status_domain",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "status_domain"
+          }
+        }
       }
     ],
     "parameters": {
@@ -71,6 +93,8 @@
       false,
       false,
       false,
+      false,
+      true,
       false,
       true
     ]

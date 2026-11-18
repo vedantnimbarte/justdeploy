@@ -1,0 +1,56 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT date_bin(interval '15 minutes', m.ts, TIMESTAMPTZ '2000-01-01') AS \"t!\",\n                      m.service_id, avg(m.cpu_percent) AS \"cpu!\",\n                      avg(m.memory_bytes)::bigint AS \"memory!\",\n                      coalesce((SELECT u.disk_bytes FROM usage_hourly u WHERE u.service_id = m.service_id\n                                ORDER BY u.hour DESC LIMIT 1), 0) AS \"disk!\"\n               FROM metric_samples m JOIN services s ON s.id = m.service_id\n               WHERE s.project_id = $1 AND m.ts > now() - interval '1 day'\n               GROUP BY 1, 2 ORDER BY 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "t!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "service_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "metric_samples",
+            "name": "service_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "cpu!",
+        "type_info": "Float8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "memory!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "disk!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      false,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "15c0e093f61a193447c850403ce78d9417eeb08c54b1875487a9c3ef0ee3d324"
+}

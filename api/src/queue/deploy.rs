@@ -11,10 +11,11 @@
 use crate::{
     backups, cluster,
     docker::{self, spec, LABEL_DEPLOYMENT, LABEL_KIND, LABEL_PR, LABEL_PROJECT, LABEL_SERVICE},
+    engines,
     error::{Error, Result},
     github,
     models::{Deployment, Project, Service},
-    names, notify, services,
+    names, notify, pitr, services,
     state::SharedState,
 };
 use anyhow::{anyhow, bail};
@@ -209,6 +210,23 @@ async fn pipeline(
             image
         }
     };
+    // Archiving needs wal-g, in the justdeploy Postgres image; turning it off
+    // goes back to the engine's own.
+    let image = match (pitr::archiving(service), service.engine.as_deref()) {
+        (true, _) if image != state.config.postgres_image => {
+            let wanted = state.config.postgres_image.clone();
+            pull(state, &wanted, log).await?;
+            wanted
+        }
+        (false, Some(engine)) if image == state.config.postgres_image => {
+            let wanted = engines::get(engine)
+                .map(|e| e.image.to_string())
+                .unwrap_or(image);
+            pull(state, &wanted, log).await?;
+            wanted
+        }
+        _ => image,
+    };
     sqlx::query!(
         "UPDATE deployments SET image_ref = $2 WHERE id = $1",
         deployment.id,
@@ -351,9 +369,13 @@ async fn release(
     if let Some(pr) = deployment.pr_number {
         preview_databases(state, project, &network, pr, log).await?;
     }
-    let env = services::runtime_env(state, service, deployment.pr_number)
+    let mut env = services::runtime_env(state, service, deployment.pr_number)
         .await
         .map_err(err)?;
+    let archiving = pitr::archiving(service) && deployment.pr_number.is_none();
+    if let (true, Some(destination)) = (archiving, service.pitr_destination_id) {
+        env.extend(pitr::walg_env(state, service.id, destination).await?);
+    }
     let hosts = services::hosts(state, service, project, deployment.pr_number)
         .await
         .map_err(err)?;
@@ -376,6 +398,11 @@ async fn release(
         tls: state.config.tls(),
         replicas,
         constraints: cluster::constraints(service, image),
+        args: if archiving {
+            Some(pitr::archive_args())
+        } else {
+            service.engine.as_deref().and_then(engines::command)
+        },
     };
     let name = spec.name();
 
@@ -456,6 +483,9 @@ async fn release(
             docker::stop(&state.docker, id).await?;
         }
     }
+
+    // A database restored from another's history is filled before it first starts.
+    pitr::prepare(state, service, &volumes, |line| log.line(line)).await?;
 
     log.line(format!(
         "==> Starting {name} ({replicas} {})",

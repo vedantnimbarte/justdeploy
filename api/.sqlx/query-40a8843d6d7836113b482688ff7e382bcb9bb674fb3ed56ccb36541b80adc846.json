@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.id, s.name FROM services s\n         WHERE s.pitr_destination_id IS NOT NULL AND s.desired_state = 'running'\n           AND s.current_deployment_id IS NOT NULL\n           AND (s.pitr_base_backup_at IS NULL OR s.pitr_base_backup_at < now() - interval '1 day')\n           AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.service_id = s.id\n                           AND d.status IN ('queued', 'building', 'deploying'))",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "40a8843d6d7836113b482688ff7e382bcb9bb674fb3ed56ccb36541b80adc846"
+}

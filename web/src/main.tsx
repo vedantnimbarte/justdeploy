@@ -14,6 +14,7 @@ import ProjectsPage from "./pages/Projects";
 import ServersPage from "./pages/Servers";
 import ServicePage from "./pages/Service";
 import SettingsPage from "./pages/Settings";
+import StatusPage from "./pages/StatusPage";
 import TeamPage from "./pages/Team";
 import TemplatesPage from "./pages/Templates";
 import "./styles.css";
@@ -30,8 +31,21 @@ function AuthGate() {
   const { pathname } = useLocation();
   const status = useQuery({
     queryKey: ["auth-status"],
-    queryFn: () => api.get<{ setup_required: boolean; authenticated: boolean }>("/auth/status"),
+    queryFn: () =>
+      api.get<{
+        setup_required: boolean;
+        authenticated: boolean;
+        status_page: string | null;
+      }>("/auth/status"),
   });
+  // Status pages are public: no sign-in, no app chrome.
+  if (pathname.startsWith("/status/")) {
+    return (
+      <Routes>
+        <Route path="/status/:name" element={<StatusPage />} />
+      </Routes>
+    );
+  }
   if (status.isPending) return null;
   if (status.isError) {
     return <p className="p-8">Cannot reach the justdeploy API. Is it running?</p>;
@@ -44,6 +58,8 @@ function AuthGate() {
       </Routes>
     );
   }
+  // A status page's own hostname shows only that page.
+  if (status.data.status_page) return <StatusPage name={status.data.status_page} />;
   if (status.data.setup_required) return <AuthPage mode="setup" />;
   if (!status.data.authenticated) return <AuthPage mode="login" />;
   return (

@@ -30,6 +30,10 @@ pub struct Config {
     /// The address other servers reach this one on, when Docker can't pick one
     /// (a server with several addresses) while starting the Swarm.
     pub advertise_addr: Option<String>,
+    /// PostgreSQL with wal-g, which databases switch to for point-in-time recovery.
+    pub postgres_image: String,
+    /// Days of service output kept for search.
+    pub log_days: i32,
 }
 
 impl Config {
@@ -65,6 +69,15 @@ impl Config {
                 .ok()
                 .filter(|n| *n > 0)
                 .context("JD_DEPLOY_WORKERS must be a whole number above 0")?,
+            postgres_image: optional(
+                "JD_POSTGRES_IMAGE",
+                "ghcr.io/vedantnimbarte/justdeploy-postgres:17",
+            ),
+            log_days: optional("JD_LOG_DAYS", "7")
+                .parse()
+                .ok()
+                .filter(|d| (1..=365).contains(d))
+                .context("JD_LOG_DAYS must be a number of days from 1 to 365")?,
             advertise_addr: std::env::var("JD_ADVERTISE_ADDR")
                 .ok()
                 .filter(|v| !v.is_empty()),

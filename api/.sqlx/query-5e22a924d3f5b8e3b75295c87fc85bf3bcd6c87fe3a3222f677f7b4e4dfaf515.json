@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM log_lines WHERE ts < now() - make_interval(days => $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5e22a924d3f5b8e3b75295c87fc85bf3bcd6c87fe3a3222f677f7b4e4dfaf515"
+}

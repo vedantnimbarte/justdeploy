@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE usage_hourly SET disk_bytes = $2\n             WHERE service_id = $1 AND hour = date_trunc('hour', now()) - interval '1 hour'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1b69a97e83f29da6a962bd9b535deb5f8c7ccf52b80d8c07254065996115dca7"
+}

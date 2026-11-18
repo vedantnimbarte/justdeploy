@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        INSERT INTO services (id, project_id, name, kind, repo_url, branch, root_dir, git_token_enc,\n            build_type, dockerfile_path, image, engine, port, public, health_path, cpu_millis,\n            memory_mb, webhook_secret, pre_deploy_command, cron_schedule)\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,\n            $19, $20)\n        RETURNING *\n        ",
+  "query": "\n        INSERT INTO services (id, project_id, name, kind, repo_url, branch, root_dir, git_token_enc,\n            build_type, dockerfile_path, image, engine, port, public, health_path, cpu_millis,\n            memory_mb, webhook_secret, pre_deploy_command, cron_schedule, restore_from,\n            restore_target)\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,\n            $19, $20, $21, $22)\n        RETURNING *\n        ",
   "describe": {
     "columns": [
       {
@@ -354,6 +354,61 @@
             "name": "node_label"
           }
         }
+      },
+      {
+        "ordinal": 32,
+        "name": "on_status_page",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "on_status_page"
+          }
+        }
+      },
+      {
+        "ordinal": 33,
+        "name": "pitr_destination_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "pitr_destination_id"
+          }
+        }
+      },
+      {
+        "ordinal": 34,
+        "name": "pitr_base_backup_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "pitr_base_backup_at"
+          }
+        }
+      },
+      {
+        "ordinal": 35,
+        "name": "restore_from",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "restore_from"
+          }
+        }
+      },
+      {
+        "ordinal": 36,
+        "name": "restore_target",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "restore_target"
+          }
+        }
       }
     ],
     "parameters": {
@@ -377,7 +432,9 @@
         "Int4",
         "Text",
         "Text",
-        "Text"
+        "Text",
+        "Uuid",
+        "Timestamptz"
       ]
     },
     "nullable": [
@@ -412,8 +469,13 @@
       true,
       false,
       true,
+      true,
+      false,
+      true,
+      true,
+      true,
       true
     ]
   },
-  "hash": "406f516aea6c70bbc1cf066a72d5fff6d75c2e9331dd68df48f3e6d37cfd94ad"
+  "hash": "837da67c37a1bfe305159813cb2cfa6107baf9d6284529ae2a3ab65fba7174d1"
 }

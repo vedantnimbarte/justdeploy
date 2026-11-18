@@ -186,7 +186,7 @@ pub async fn delete_destination(state: &SharedState, id: Uuid) -> Result<()> {
     Ok(())
 }
 
-async fn load_destination(state: &SharedState, id: Uuid) -> anyhow::Result<DestinationConfig> {
+pub async fn load_destination(state: &SharedState, id: Uuid) -> anyhow::Result<DestinationConfig> {
     let enc = sqlx::query_scalar!(
         "SELECT config_enc FROM backup_destinations WHERE id = $1",
         id

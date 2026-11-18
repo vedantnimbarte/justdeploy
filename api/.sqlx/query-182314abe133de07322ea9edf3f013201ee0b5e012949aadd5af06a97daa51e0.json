@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT ts, up, latency_ms FROM uptime_checks WHERE service_id = $1 ORDER BY ts DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ts",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "uptime_checks",
+            "name": "ts"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "up",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "uptime_checks",
+            "name": "up"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "latency_ms",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "uptime_checks",
+            "name": "latency_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "182314abe133de07322ea9edf3f013201ee0b5e012949aadd5af06a97daa51e0"
+}
