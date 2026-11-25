@@ -19,6 +19,7 @@ services:
       JD_BUILDER_IMAGE: ${JD_BUILDER_IMAGE:-ghcr.io/vedantnimbarte/justdeploy-builder:latest}
       JD_DEPLOY_WORKERS: ${JD_DEPLOY_WORKERS:-2}
       JD_ADVERTISE_ADDR: ${JD_ADVERTISE_ADDR:-}
+      JD_LOG_DAYS: ${JD_LOG_DAYS:-7}
     ports:
       - "${JD_PORT:-8080}:8080"
     volumes:
@@ -26,6 +27,10 @@ services:
       # root on the host: keep the dashboard behind a strong password.
       - /var/run/docker.sock:/var/run/docker.sock
       - backups:/backups
+    # Traefik sends its traces here over jd-proxy (port 4318, never published).
+    networks:
+      - default
+      - proxy
 
   postgres:
     image: postgres:17-alpine
@@ -53,6 +58,10 @@ services:
       - --providers.swarm.exposedbydefault=false
       - --providers.swarm.network=jd-mesh
       - --entrypoints.web.address=:80
+      # Every request is traced to justdeploy's internal OTLP receiver: that span is the request log.
+      - --tracing=true
+      - --tracing.sampleRate=1
+      - --tracing.otlp.http.endpoint=${JD_OTLP_TRACES_URL:-http://justdeploy:4318/v1/traces}
     ports:
       - "80:80"
     volumes:

@@ -1,0 +1,68 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT sp.http_method AS method, sp.http_path AS path, sv.name AS service,\n                  count(*) AS \"errors!\", max(sp.start_ts) AS \"last!\"\n           FROM spans sp JOIN services sv ON sv.id = sp.service_id\n           WHERE sp.source = 'edge' AND sp.http_status >= 500 AND sv.project_id = $1\n             AND ($2::uuid IS NULL OR sp.service_id = $2)\n             AND sp.start_ts > now() - make_interval(hours => $3)\n           GROUP BY 1, 2, 3 ORDER BY 4 DESC LIMIT 10",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "method",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "spans",
+            "name": "http_method"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "path",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "spans",
+            "name": "http_path"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "service",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "errors!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "last!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "8de3a07be427c04cc0e13d5fe33e7ca546f7b0a2832124b23cfeebbeace0f801"
+}

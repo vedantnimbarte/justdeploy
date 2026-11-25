@@ -6,7 +6,9 @@ You need Docker (Docker Desktop on Windows and macOS), Rust (stable), Node 24 an
 `sqlx-cli` (`cargo install sqlx-cli --no-default-features --features postgres`).
 
 ```bash
-# 1. Postgres (published on 127.0.0.1:5433) and Traefik (port 80)
+# 1. Postgres (published on 127.0.0.1:5433) and Traefik (port 80), which sends request
+#    traces to the API running on your machine
+echo JD_OTLP_TRACES_URL=http://host.docker.internal:4318/v1/traces >> .env
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres traefik
 
 # 2. The builder image, tagged :dev

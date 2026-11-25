@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { api, kindLabel, timeAgo, triggerLabel, type Project, type Service } from "../api";
 import { useMe } from "../me";
@@ -10,7 +10,10 @@ import { EnvEditor } from "./service/Env";
 import Uptime from "./project/Uptime";
 import Usage from "./project/Usage";
 
-type ProjectTab = "services" | "usage" | "uptime" | "variables";
+// Charts and tables of requests and logs: loaded when opened.
+const Observability = lazy(() => import("./observability/Observability"));
+
+type ProjectTab = "services" | "observability" | "usage" | "uptime" | "variables";
 
 export default function ProjectPage() {
   const { id = "" } = useParams();
@@ -53,6 +56,7 @@ export default function ProjectPage() {
   const p = project.data;
   const tabs: { id: ProjectTab; label: string }[] = [
     { id: "services", label: "Services" },
+    { id: "observability", label: "Observability" },
     { id: "usage", label: "Usage" },
     { id: "uptime", label: "Uptime" },
     ...(can("member") ? [{ id: "variables" as ProjectTab, label: "Shared variables" }] : []),
@@ -81,6 +85,11 @@ export default function ProjectPage() {
       </PageHeader>
       <Tabs<ProjectTab> tabs={tabs} active={tab} onChange={(t) => setParams({ tab: t }, { replace: true })} />
       <Band>
+        {tab === "observability" && (
+          <Suspense fallback={<p>Loading…</p>}>
+            <Observability projectId={p.id} services={p.services} />
+          </Suspense>
+        )}
         {tab === "usage" && <Usage project={p} />}
         {tab === "uptime" && <Uptime project={p} />}
         {tab === "variables" && (

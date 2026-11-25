@@ -35,6 +35,8 @@ pub struct Release<'a> {
     pub constraints: Vec<String>,
     /// The container's arguments, when they differ from the image's.
     pub args: Option<Vec<String>>,
+    /// Where OpenTelemetry SDKs send traces; only routed services can reach it.
+    pub otlp_endpoint: &'a str,
 }
 
 impl Release<'_> {
@@ -92,6 +94,26 @@ impl Release<'_> {
         if let (Some(port), true) = (service.port, service.kind != "database") {
             if !self.env.iter().any(|(k, _)| k == "PORT") {
                 env.push(format!("PORT={port}"));
+            }
+        }
+        // OpenTelemetry SDKs read these, so an instrumented app's traces reach
+        // justdeploy without setup. Only routed services are on jd-mesh with it.
+        if self.routed() {
+            let tag = format!("jd.deployment={}", self.deployment.id);
+            for (key, value) in [
+                ("OTEL_EXPORTER_OTLP_ENDPOINT", self.otlp_endpoint),
+                ("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf"),
+                ("OTEL_SERVICE_NAME", &service.name),
+                ("OTEL_RESOURCE_ATTRIBUTES", &tag),
+            ] {
+                match env.iter_mut().find(|e| e.split('=').next() == Some(key)) {
+                    // The app's own attributes stay; the deployment is added.
+                    Some(own) if key == "OTEL_RESOURCE_ATTRIBUTES" => {
+                        own.push_str(&format!(",{tag}"));
+                    }
+                    Some(_) => {}
+                    None => env.push(format!("{key}={value}")),
+                }
             }
         }
 
@@ -504,6 +526,7 @@ pub(crate) mod tests {
             replicas: 2,
             constraints: vec!["node.id==n1".into()],
             args: None,
+            otlp_endpoint: "http://jd:4318",
         }
     }
 
@@ -563,6 +586,48 @@ pub(crate) mod tests {
         let spec = release(&s, &d, &[]).spec();
         assert!(!spec.labels.unwrap().contains_key("traefik.enable"));
         assert_eq!(networks(&release(&s, &d, &[]).spec()).len(), 1);
+    }
+
+    #[test]
+    fn routed_services_are_told_where_to_send_traces() {
+        let (s, d) = (service(), deployment(None));
+        let hosts = vec!["api-shop.example.com".to_string()];
+        let env = container(&release(&s, &d, &hosts).spec()).env.unwrap();
+        assert!(env.contains(&"OTEL_EXPORTER_OTLP_ENDPOINT=http://jd:4318".to_string()));
+        assert!(env.contains(&format!("OTEL_SERVICE_NAME={}", s.name)));
+        assert!(env.contains(&format!("OTEL_RESOURCE_ATTRIBUTES=jd.deployment={}", d.id)));
+
+        // The app's own attributes and endpoint stay; the deployment is added.
+        let own = [
+            (
+                "OTEL_RESOURCE_ATTRIBUTES".to_string(),
+                "team=web".to_string(),
+            ),
+            (
+                "OTEL_EXPORTER_OTLP_ENDPOINT".to_string(),
+                "http://mine:4318".to_string(),
+            ),
+        ];
+        let mut r = release(&s, &d, &hosts);
+        r.env = &own;
+        let env = container(&r.spec()).env.unwrap();
+        assert!(env.contains(&format!(
+            "OTEL_RESOURCE_ATTRIBUTES=team=web,jd.deployment={}",
+            d.id
+        )));
+        assert!(env.contains(&"OTEL_EXPORTER_OTLP_ENDPOINT=http://mine:4318".to_string()));
+        assert_eq!(
+            env.iter()
+                .filter(|e| e.starts_with("OTEL_EXPORTER_OTLP_ENDPOINT="))
+                .count(),
+            1
+        );
+
+        // Private services can't reach the receiver, so they aren't pointed at it.
+        let env = container(&release(&s, &d, &[]).spec())
+            .env
+            .unwrap_or_default();
+        assert!(!env.iter().any(|e| e.starts_with("OTEL_")));
     }
 
     #[test]

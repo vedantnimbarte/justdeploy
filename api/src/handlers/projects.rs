@@ -348,33 +348,6 @@ pub async fn public_status(
     Ok(Json(crate::uptime::status_page(&state, &name).await?))
 }
 
-#[derive(Deserialize)]
-pub struct LogSearch {
-    #[serde(default)]
-    q: String,
-    hours: Option<i32>,
-    before: Option<i64>,
-}
-
-pub async fn search_logs(
-    _: Viewer,
-    State(state): State<SharedState>,
-    Path(id): Path<Uuid>,
-    axum::extract::Query(query): axum::extract::Query<LogSearch>,
-) -> Result<Json<Vec<crate::logs::Line>>> {
-    services::get_service(&state.db, id).await?;
-    Ok(Json(
-        crate::logs::search(
-            &state,
-            id,
-            &query.q,
-            query.hours.unwrap_or(24),
-            query.before,
-        )
-        .await?,
-    ))
-}
-
 pub async fn pitr_status(
     _: Viewer,
     State(state): State<SharedState>,

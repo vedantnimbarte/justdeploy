@@ -63,6 +63,15 @@ static COMPOSE_TRAEFIK: OnceLock<(String, String)> = OnceLock::new();
 static COMPOSE_POSTGRES: OnceLock<(String, String)> = OnceLock::new();
 const LABEL_NODE: &str = "jd.node";
 
+/// Where Traefik and apps send traces: the control plane over `jd-mesh`, or the
+/// Docker host when the control plane isn't in a container (development).
+pub fn otlp_endpoint() -> String {
+    let host = CONTROL_PLANE
+        .get()
+        .map_or("host.docker.internal", String::as_str);
+    format!("http://{host}:{}", crate::traces::PORT)
+}
+
 /// The compose Traefik, which issues certificates: (container id, name).
 pub fn compose_traefik() -> Option<(&'static str, &'static str)> {
     COMPOSE_TRAEFIK

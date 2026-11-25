@@ -24,6 +24,7 @@ mod runs;
 mod services;
 mod state;
 mod templates;
+mod traces;
 mod uptime;
 mod usage;
 mod webhooks;
@@ -91,6 +92,15 @@ async fn main() -> anyhow::Result<()> {
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     queue::spawn(state.clone());
+
+    let otlp = tokio::net::TcpListener::bind(("0.0.0.0", traces::PORT)).await?;
+    tracing::info!("receiving traces on port {}", traces::PORT);
+    let receiver = traces::router(state.clone());
+    tokio::spawn(async move {
+        if let Err(error) = axum::serve(otlp, receiver).await {
+            tracing::error!(%error, "trace receiver stopped");
+        }
+    });
 
     let app = handlers::router(state.clone()).layer(TraceLayer::new_for_http());
     let listener = tokio::net::TcpListener::bind(state.config.bind).await?;

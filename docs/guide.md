@@ -11,6 +11,7 @@
 - [Backups and restore](#backups-and-restore)
 - [Runs and cron jobs](#runs-and-cron-jobs)
 - [Logs, metrics and the terminal](#logs-metrics-and-the-terminal)
+- [Requests, logs and traces](#requests-logs-and-traces)
 - [Usage, uptime and status pages](#usage-uptime-and-status-pages)
 - [Team, roles and access](#team-roles-and-access)
 - [Command line: jd](#command-line-jd)
@@ -199,7 +200,8 @@ Under **Variables**: add them one by one, or paste a `.env` file. Values are enc
 AES-256-GCM under `JD_MASTER_KEY`. Saving re-releases the current image with the new values; use
 **Deploy latest** when a build step reads them. Names starting with `JD_` are reserved.
 
-`PORT` is set to the service's port unless you set it yourself.
+`PORT` is set to the service's port unless you set it yourself. Public services also get the
+`OTEL_*` variables described in [Tracing your app](#tracing-your-app).
 
 **Shared variables.** On a project's page, variables every service in the project gets, at build and run
 time. A service's own variable with the same name wins. Saving redeploys the project's running services.
@@ -337,16 +339,55 @@ host port or have previews.
 
 ## Logs, metrics and the terminal
 
-- **Logs** follows the live container's output (the last 500 lines, then live). *Search* looks
-  through everything production services have printed, kept in justdeploy's Postgres for
-  `JD_LOG_DAYS` (7) days: any text, case-insensitive, over the last hour to 30 days, newest first,
-  200 lines at a time.
+- **Logs** follows the live container's output (the last 500 lines, then live). To search what was
+  printed earlier, use [Observability](#requests-logs-and-traces).
 - **Metrics** charts CPU, memory (excluding reclaimable page cache) and network rate per service.
   Samples are taken every 30 seconds and kept for 24 hours.
 - **Terminal** opens a shell (`bash` if present, otherwise `sh`) inside the running container. Each
   session is written to the audit log.
 
 ---
+
+## Requests, logs and traces
+
+Every project, and every service on its own page, has an **Observability** tab with three views. Each
+can be narrowed to a time range, a service, and production or previews.
+
+- **Requests** lists every request a public service answered: time, status, method, path, host,
+  service and duration, newest first. Filter by status class (2xx to 5xx), method, or text in the
+  path or host. Over the last hour the list follows along every 5 seconds. Query string values
+  are redacted (`?token=REDACTED`).
+- **Logs** searches everything production and preview services printed: any text, case-insensitive,
+  and a level. A JSON line gets its level from `level`, `severity`, `lvl` or `levelname` (pino's
+  numbers too), and its fields show when you click it. A plain line is info unless it starts with a
+  level such as `ERROR`, `[warn]` or `error:`, or carries `level=…`.
+- **Overview** charts requests with their share of 5xx answers, p50 and p95 latency, and lines logged
+  at error level. Below the charts are the routes that fail most and the most frequent error messages.
+
+Click a request to see its details, its **trace** as a timeline, and the lines logged while serving it.
+Requests, traces and log lines are kept in justdeploy's Postgres for `JD_LOG_DAYS` (7) days.
+
+### Tracing your app
+
+Traefik traces every request, so each one shows how long it took at the edge with no change to your
+app. For the work inside a request, such as database queries and outgoing calls, add an
+[OpenTelemetry](https://opentelemetry.io) SDK to the app. justdeploy sets what the SDK needs on every
+public service: `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`,
+`OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES` (if you set any of these yourself, yours wins; to
+`OTEL_RESOURCE_ATTRIBUTES` justdeploy adds its deployment id). For example:
+
+- **Node.js:** install `@opentelemetry/api` and `@opentelemetry/auto-instrumentations-node`, and set
+  the variable `NODE_OPTIONS=--require @opentelemetry/auto-instrumentations-node/register`.
+- **Python:** install `opentelemetry-distro` and `opentelemetry-exporter-otlp`, run
+  `opentelemetry-bootstrap -a install` in the build, and start the app with
+  `opentelemetry-instrument`, as in `opentelemetry-instrument uvicorn main:app`.
+
+The app's spans appear under Traefik's span for the request. To group log lines under their request,
+log JSON with the trace id in a `trace_id` (or `traceId`) field. Most OpenTelemetry logging
+integrations do this for you.
+
+Private services and workers aren't on the network the receiver listens on, so their traces don't
+reach justdeploy.
 
 ## Usage, uptime and status pages
 

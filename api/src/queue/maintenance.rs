@@ -69,6 +69,12 @@ pub fn spawn(state: SharedState) {
     );
     every(
         state.clone(),
+        "request routes",
+        Duration::from_secs(30),
+        crate::traces::refresh_routes,
+    );
+    every(
+        state.clone(),
         "uptime checks",
         Duration::from_secs(60),
         uptime::check,
@@ -226,6 +232,7 @@ async fn cleanup(state: SharedState) -> Result<()> {
         .execute(&state.db)
         .await?;
     logs::prune(&state).await?;
+    crate::traces::prune(&state).await?;
     sqlx::query!("DELETE FROM sessions WHERE expires_at < now()")
         .execute(&state.db)
         .await?;

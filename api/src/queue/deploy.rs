@@ -398,6 +398,7 @@ async fn release(
         tls: state.config.tls(),
         replicas,
         constraints: cluster::constraints(service, image),
+        otlp_endpoint: &cluster::otlp_endpoint(),
         args: if archiving {
             Some(pitr::archive_args())
         } else {

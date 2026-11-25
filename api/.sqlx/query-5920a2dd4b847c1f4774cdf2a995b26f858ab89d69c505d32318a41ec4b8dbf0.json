@@ -1,0 +1,119 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT l.id, l.ts, l.line, l.level, l.trace_id, l.fields,\n                  l.service_id AS \"service_id!\", sv.name AS service\n           FROM log_lines l\n           JOIN services sv ON sv.id = l.service_id\n           LEFT JOIN deployments d ON d.id = l.deployment_id\n           WHERE sv.project_id = $1\n             AND ($2::uuid IS NULL OR l.service_id = $2)\n             AND ($3::text IS NULL OR ($3 = 'preview') = (d.pr_number IS NOT NULL))\n             AND ($4::int2 IS NULL OR l.level = $4)\n             AND l.ts >= $5 AND l.ts < $6\n             AND l.line ILIKE $7\n             AND ($8::bigint IS NULL OR l.id < $8)\n           ORDER BY l.id DESC LIMIT 200",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "log_lines",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "ts",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "log_lines",
+            "name": "ts"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "line",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "log_lines",
+            "name": "line"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "level",
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "log_lines",
+            "name": "level"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "trace_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "log_lines",
+            "name": "trace_id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "fields",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "log_lines",
+            "name": "fields"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "service_id!",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "log_lines",
+            "name": "service_id"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "service",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Int2",
+        "Timestamptz",
+        "Timestamptz",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "5920a2dd4b847c1f4774cdf2a995b26f858ab89d69c505d32318a41ec4b8dbf0"
+}

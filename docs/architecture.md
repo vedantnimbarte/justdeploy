@@ -30,6 +30,14 @@ in short-lived **builder** containers (`justdeploy-builder`: git, the Docker CLI
 Railpack). With more than one server and HTTPS on, built images go to a private registry so every
 server can pull them; otherwise they stay on the main server, and so do the services built from them.
 
+**Requests and traces.** Traefik traces every request with OpenTelemetry and sends the spans to an
+OTLP/HTTP receiver in the control plane on port 4318. That port isn't published on the host:
+Traefik and public services reach it over `jd-proxy` and `jd-mesh`. Traefik's span for a request is
+the request log. It's matched to a deployment by its host, using the same router labels Traefik
+routes by. Apps with an OpenTelemetry SDK send their own spans to the same receiver (justdeploy sets
+`OTEL_EXPORTER_OTLP_ENDPOINT`), and these nest under Traefik's span by trace id. Spans and log lines
+live in Postgres and are pruned after `JD_LOG_DAYS`.
+
 Work that takes time (builds, releases, removals, backups) goes through a job queue in Postgres, so
 it survives a restart. Swarm restarts copies that exit and moves them off a server that goes down. A
 reconciler runs every minute on top: it redeploys a service whose workload was removed by hand, scales

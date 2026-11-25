@@ -352,10 +352,72 @@ export interface PitrStatus {
   error: string | null;
 }
 
+/** 0 debug, 1 info, 2 warn, 3 error. */
+export type Level = 0 | 1 | 2 | 3;
+
 export interface LogLine {
   id: number;
   ts: string;
   line: string;
+  level: Level;
+  /** The trace the line was logged in, when it named one. */
+  trace_id: string | null;
+  /** The line's fields, when it was a JSON object. */
+  fields: Record<string, unknown> | null;
+  service_id: string;
+  service: string;
+}
+
+/** One request, as Traefik saw it. */
+export interface RequestRow {
+  id: number;
+  trace_id: string;
+  ts: string;
+  duration_us: number;
+  method: string | null;
+  host: string | null;
+  path: string | null;
+  status: number | null;
+  client_ip: string | null;
+  service_id: string;
+  service: string;
+  /** The pull request whose preview answered, if one did. */
+  pr: number | null;
+}
+
+/** Requests per step over a range, by status class. */
+export interface RequestVolume {
+  step_secs: number;
+  buckets: { t: string; ok: number; redirect: number; client: number; server: number }[];
+}
+
+export interface Span {
+  span_id: string;
+  parent_span_id: string | null;
+  /** edge: Traefik's span for the request; app: sent by the app. */
+  source: "edge" | "app";
+  name: string;
+  kind: number;
+  start_ts: string;
+  duration_us: number;
+  /** OpenTelemetry status: 0 unset, 1 ok, 2 error. */
+  status: number;
+  http_status: number | null;
+  service: string | null;
+  attrs: Record<string, unknown>;
+}
+
+export interface TraceDetail {
+  spans: Span[];
+  logs: LogLine[];
+}
+
+export interface ObservabilityOverview {
+  /** Minutes per bucket. */
+  step: number;
+  buckets: { t: string; requests: number; errors: number; p50_ms: number | null; p95_ms: number | null; error_logs: number }[];
+  failing: { method: string | null; path: string | null; service: string; errors: number; last: string }[];
+  errors: { message: string; service: string; count: number; last: string }[];
 }
 
 export interface DnsCheck {
@@ -430,6 +492,13 @@ export function bytes(n: number | null | undefined): string {
     unit++;
   }
   return `${value.toFixed(value < 10 && unit > 0 ? 1 : 0)} ${units[unit]}`;
+}
+
+/** A span or request's duration from microseconds: 850 µs, 120 ms, 1.4 s. */
+export function micros(us: number): string {
+  if (us < 1000) return `${us} µs`;
+  if (us < 1_000_000) return `${(us / 1000).toFixed(us < 10_000 ? 1 : 0)} ms`;
+  return `${(us / 1_000_000).toFixed(1)} s`;
 }
 
 /** What started a deployment, in words. */

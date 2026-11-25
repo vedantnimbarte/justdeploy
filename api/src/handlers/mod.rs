@@ -1,5 +1,6 @@
 pub mod admin;
 mod auth;
+mod observability;
 mod overview;
 mod projects;
 mod streams;
@@ -96,7 +97,11 @@ pub fn router(state: SharedState) -> Router {
             put(projects::configure_status_page),
         )
         .route("/status/{name}", get(projects::public_status))
-        .route("/services/{id}/logs/search", get(projects::search_logs))
+        .route("/projects/{id}/requests", get(observability::requests))
+        .route("/projects/{id}/requests/volume", get(observability::volume))
+        .route("/projects/{id}/logs", get(observability::logs))
+        .route("/projects/{id}/observability", get(observability::overview))
+        .route("/traces/{id}", get(observability::trace))
         .route(
             "/services/{id}/pitr",
             get(projects::pitr_status).put(projects::configure_pitr),
