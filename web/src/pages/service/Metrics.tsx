@@ -18,7 +18,7 @@ const RANGES = [
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-function Chart({
+export function Chart({
   title,
   latest,
   children,

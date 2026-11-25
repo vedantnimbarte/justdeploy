@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT max(ts) FROM log_lines WHERE service_id = $1",
+  "query": "SELECT max(ts) FROM log_lines\n         WHERE service_id = $1 AND (deployment_id = $2 OR deployment_id IS NULL)",
   "describe": {
     "columns": [
       {
@@ -12,6 +12,7 @@
     ],
     "parameters": {
       "Left": [
+        "Uuid",
         "Uuid"
       ]
     },
@@ -19,5 +20,5 @@
       null
     ]
   },
-  "hash": "8a8d5730cb20eb004a93ca66695112544bad2968ce63f3438b66a921c0e88ed2"
+  "hash": "ad23d0962a54f459010cfb3288e8491453375cddd06b42421ea76c88478b7948"
 }

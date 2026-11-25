@@ -1,0 +1,61 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH b AS (\n             SELECT generate_series(\n               date_bin(make_interval(mins => $3), now() - make_interval(hours => $2), TIMESTAMPTZ '2000-01-01'),\n               now(), make_interval(mins => $3)) AS t\n           ), r AS (\n             SELECT date_bin(make_interval(mins => $3), sp.start_ts, TIMESTAMPTZ '2000-01-01') AS t,\n                    count(*) AS n,\n                    count(*) FILTER (WHERE sp.http_status >= 500) AS e,\n                    percentile_cont(0.5) WITHIN GROUP (ORDER BY sp.duration_us) AS p50,\n                    percentile_cont(0.95) WITHIN GROUP (ORDER BY sp.duration_us) AS p95\n             FROM spans sp JOIN services sv ON sv.id = sp.service_id\n             WHERE sp.source = 'edge' AND sv.project_id = $1\n               AND ($4::uuid IS NULL OR sp.service_id = $4)\n               AND sp.start_ts > now() - make_interval(hours => $2)\n             GROUP BY 1\n           ), l AS (\n             SELECT date_bin(make_interval(mins => $3), l.ts, TIMESTAMPTZ '2000-01-01') AS t, count(*) AS n\n             FROM log_lines l JOIN services sv ON sv.id = l.service_id\n             WHERE l.level = 3 AND sv.project_id = $1\n               AND ($4::uuid IS NULL OR l.service_id = $4)\n               AND l.ts > now() - make_interval(hours => $2)\n             GROUP BY 1\n           )\n           SELECT b.t AS \"t!\", coalesce(r.n, 0) AS \"requests!\", coalesce(r.e, 0) AS \"errors!\",\n                  r.p50 / 1000.0 AS p50_ms, r.p95 / 1000.0 AS p95_ms,\n                  coalesce(l.n, 0) AS \"error_logs!\"\n           FROM b LEFT JOIN r USING (t) LEFT JOIN l USING (t)\n           ORDER BY b.t",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "t!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "requests!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "errors!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "p50_ms",
+        "type_info": "Float8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "p95_ms",
+        "type_info": "Float8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "error_logs!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Int4",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "785075ec71078929a5fa3e123945cf0a9bf325b6af624f8a3a34d220448c95cf"
+}

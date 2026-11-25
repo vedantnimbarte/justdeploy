@@ -1,0 +1,58 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH b AS (\n             SELECT generate_series(\n               date_bin(make_interval(secs => $8), $6::timestamptz, TIMESTAMPTZ '2000-01-01'),\n               $7::timestamptz - interval '1 microsecond', make_interval(secs => $8)) AS t\n           ), r AS (\n             SELECT date_bin(make_interval(secs => $8), sp.start_ts, TIMESTAMPTZ '2000-01-01') AS t,\n                    count(*) FILTER (WHERE sp.http_status IS NULL OR sp.http_status < 300) AS ok,\n                    count(*) FILTER (WHERE sp.http_status BETWEEN 300 AND 399) AS redirect,\n                    count(*) FILTER (WHERE sp.http_status BETWEEN 400 AND 499) AS client,\n                    count(*) FILTER (WHERE sp.http_status >= 500) AS server\n             FROM spans sp\n             JOIN services sv ON sv.id = sp.service_id\n             LEFT JOIN deployments d ON d.id = sp.deployment_id\n             WHERE sp.source = 'edge' AND sv.project_id = $1\n               AND ($2::uuid IS NULL OR sp.service_id = $2)\n               AND ($3::text IS NULL OR ($3 = 'preview') = (d.pr_number IS NOT NULL))\n               AND ($4::text IS NULL OR sp.http_method = $4)\n               AND ($5 = '%%' OR sp.http_path ILIKE $5 OR sp.http_host ILIKE $5)\n               AND sp.start_ts >= $6 AND sp.start_ts < $7\n             GROUP BY 1\n           )\n           SELECT b.t AS \"t!\", coalesce(r.ok, 0) AS \"ok!\", coalesce(r.redirect, 0) AS \"redirect!\",\n                  coalesce(r.client, 0) AS \"client!\", coalesce(r.server, 0) AS \"server!\"\n           FROM b LEFT JOIN r USING (t)\n           ORDER BY b.t",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "t!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "ok!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "redirect!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "client!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "server!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Timestamptz",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "cf8c894d37baddf8b920dfb58df728c32f9158bc53124c9aa6a93e085c7492f4"
+}

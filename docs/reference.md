@@ -17,7 +17,8 @@ The control plane reads its configuration from the environment (`.env` next to t
 | `JD_VERSION` | `latest` | Image tag of justdeploy to run |
 | `JD_BUILDER_IMAGE` | `ghcr.io/vedantnimbarte/justdeploy-builder:latest` | Image used for builds and health checks |
 | `JD_POSTGRES_IMAGE` | `ghcr.io/vedantnimbarte/justdeploy-postgres:17` | PostgreSQL with wal-g, used for databases with point-in-time recovery on |
-| `JD_LOG_DAYS` | `7` | Days service logs are kept for search (1 to 365) |
+| `JD_LOG_DAYS` | `7` | Days service logs, requests and traces are kept (1 to 365) |
+| `JD_OTLP_TRACES_URL` | `http://justdeploy:4318/v1/traces` | Where the compose Traefik sends its traces. Change it only when the API doesn't run in the compose project, as in development |
 | `JD_ENV_FILE` | unset | A file of further settings, read at startup; set by `justdeploy promote` |
 | `JD_TEMPLATES_REPO` | this repository | Repository code templates build from |
 | `JD_TEMPLATES_BRANCH` | `main` | Its branch |
@@ -89,7 +90,11 @@ authenticate by signature.
 | `POST` | `/services/{id}/copy` | A new database with this one's data; returns it |
 | `GET` `POST` | `/services/{id}/copies` | Copies into this database · admin: replace its data `{from}` |
 | `GET` `POST` | `/services/{id}/replicas` | Read replicas with their lag · add one (PostgreSQL); returns it |
-| `GET` | `/services/{id}/logs/search?q=&hours=24&before=id` | Kept log lines containing `q`, newest 200 |
+| `GET` | `/projects/{id}/requests?service=&env=&status=&method=&q=&hours=1&before=id` | Requests, newest 200. `env`: `production` or `preview`; `status`: `2xx` to `5xx`; `q`: text in the path or host. Instead of `hours`, `from` and `to` (RFC 3339; `to` defaults to now) pick a fixed window |
+| `GET` | `/projects/{id}/requests/volume?service=&env=&method=&q=&hours=1` | Requests per step over the same window (at most 60 steps), counted by status class. Also takes `from` and `to` |
+| `GET` | `/projects/{id}/logs?service=&env=&level=&q=&hours=24&before=id` | Kept log lines containing `q`, newest 200. `level`: `debug`, `info`, `warn` or `error`. Also takes `from` and `to` |
+| `GET` | `/projects/{id}/observability?service=&hours=24` | Requests, 5xx answers, p50/p95 latency and error lines over time, the routes that fail most, and the commonest error messages |
+| `GET` | `/traces/{id}` | A trace's spans and the log lines that name it |
 | `GET` `POST` `DELETE` | `/backup-destinations`, `/backup-destinations/{id}` | |
 | `GET` | `/deployments/{id}` · `/deployments/{id}/logs` | Build log as server-sent events; resumes from `Last-Event-ID` |
 | `POST` | `/deployments/{id}/rollback` | |

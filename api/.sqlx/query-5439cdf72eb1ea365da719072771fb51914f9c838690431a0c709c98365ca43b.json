@@ -1,0 +1,168 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT sp.id, sp.trace_id, sp.start_ts AS ts, sp.duration_us,\n                  sp.http_method AS method, sp.http_host AS host, sp.http_path AS path,\n                  sp.http_status AS status, sp.client_ip,\n                  sp.service_id AS \"service_id!\", sv.name AS service, d.pr_number AS \"pr?\"\n           FROM spans sp\n           JOIN services sv ON sv.id = sp.service_id\n           LEFT JOIN deployments d ON d.id = sp.deployment_id\n           WHERE sp.source = 'edge' AND sv.project_id = $1\n             AND ($2::uuid IS NULL OR sp.service_id = $2)\n             AND ($3::text IS NULL OR ($3 = 'preview') = (d.pr_number IS NOT NULL))\n             AND ($4::int IS NULL OR sp.http_status / 100 = $4)\n             AND ($5::text IS NULL OR sp.http_method = $5)\n             AND ($6 = '%%' OR sp.http_path ILIKE $6 OR sp.http_host ILIKE $6)\n             AND sp.start_ts >= $7 AND sp.start_ts < $8\n             -- By when they came in, not when Traefik sent them: it sends in\n             -- batches, and a slow request only once it ends.\n             AND ($9::bigint IS NULL\n                  OR (sp.start_ts, sp.id) < (SELECT start_ts, id FROM spans WHERE id = $9))\n           ORDER BY sp.start_ts DESC, sp.id DESC LIMIT 200",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "spans",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "trace_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "spans",
+            "name": "trace_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "ts",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "spans",
+            "name": "start_ts"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "duration_us",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "spans",
+            "name": "duration_us"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "method",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "spans",
+            "name": "http_method"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "host",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "spans",
+            "name": "http_host"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "path",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "spans",
+            "name": "http_path"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "status",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "spans",
+            "name": "http_status"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "client_ip",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "spans",
+            "name": "client_ip"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "service_id!",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "spans",
+            "name": "service_id"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "service",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "pr?",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "pr_number"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Int4",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Timestamptz",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "5439cdf72eb1ea365da719072771fb51914f9c838690431a0c709c98365ca43b"
+}

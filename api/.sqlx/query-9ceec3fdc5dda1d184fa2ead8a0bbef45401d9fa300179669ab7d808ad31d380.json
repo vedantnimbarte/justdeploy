@@ -1,0 +1,112 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT l.id, l.ts, l.line, l.level, l.trace_id, l.fields,\n                  l.service_id AS \"service_id!\", sv.name AS service\n           FROM log_lines l JOIN services sv ON sv.id = l.service_id\n           WHERE l.trace_id = $1\n           ORDER BY l.ts, l.id LIMIT 500",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "log_lines",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "ts",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "log_lines",
+            "name": "ts"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "line",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "log_lines",
+            "name": "line"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "level",
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "log_lines",
+            "name": "level"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "trace_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "log_lines",
+            "name": "trace_id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "fields",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "log_lines",
+            "name": "fields"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "service_id!",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "log_lines",
+            "name": "service_id"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "service",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "services",
+            "name": "name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "9ceec3fdc5dda1d184fa2ead8a0bbef45401d9fa300179669ab7d808ad31d380"
+}

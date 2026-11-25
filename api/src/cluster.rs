@@ -63,6 +63,15 @@ static COMPOSE_TRAEFIK: OnceLock<(String, String)> = OnceLock::new();
 static COMPOSE_POSTGRES: OnceLock<(String, String)> = OnceLock::new();
 const LABEL_NODE: &str = "jd.node";
 
+/// Where Traefik and apps send traces: the control plane over `jd-mesh`, or the
+/// Docker host when the control plane isn't in a container (development).
+pub fn otlp_endpoint() -> String {
+    let host = CONTROL_PLANE
+        .get()
+        .map_or("host.docker.internal", String::as_str);
+    format!("http://{host}:{}", crate::traces::PORT)
+}
+
 /// The compose Traefik, which issues certificates: (container id, name).
 pub fn compose_traefik() -> Option<(&'static str, &'static str)> {
     COMPOSE_TRAEFIK
@@ -128,29 +137,46 @@ pub async fn ensure(state: &SharedState) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The control plane joins `jd-control`, and Traefik (from the same compose
-/// project) joins `jd-mesh`. Skipped when the control plane isn't in a
-/// container, as in development.
+/// The control plane joins `jd-control`, and Traefik and Postgres from its
+/// compose project join theirs. In development the control plane runs outside
+/// a container, and the compose project is the one `docker-compose.yml` names.
 async fn join_networks(state: &SharedState) {
-    let Ok(hostname) = std::env::var("HOSTNAME") else {
-        return;
+    let in_container = match std::env::var("HOSTNAME") {
+        Ok(hostname) => state.docker.inspect_container(&hostname, None).await.ok(),
+        Err(_) => None,
     };
-    let Ok(me) = state.docker.inspect_container(&hostname, None).await else {
-        return;
+    let project = match in_container {
+        Some(me) => {
+            let id = me.id.unwrap_or_default();
+            connect(state, CONTROL, &id).await;
+            // Status pages reach the control plane over jd-mesh.
+            connect(state, MESH, &id).await;
+            if let Some(name) = me.name.as_deref() {
+                let _ = CONTROL_PLANE.set(name.trim_start_matches('/').to_string());
+            }
+            me.config
+                .and_then(|c| c.labels)
+                .and_then(|l| l.get("com.docker.compose.project").cloned())
+        }
+        None => Some(DEV_COMPOSE_PROJECT.to_string()),
     };
-    let id = me.id.unwrap_or_default();
-    connect(state, CONTROL, &id).await;
-    // Status pages reach the control plane over jd-mesh.
-    connect(state, MESH, &id).await;
-    if let Some(name) = me.name.as_deref() {
-        let _ = CONTROL_PLANE.set(name.trim_start_matches('/').to_string());
+    if let Some(project) = project {
+        let _ = COMPOSE_PROJECT.set(project);
+        join_compose(state).await;
     }
-    let project = me
-        .config
-        .and_then(|c| c.labels)
-        .and_then(|l| l.get("com.docker.compose.project").cloned());
-    let Some(project) = project else { return };
-    // Traefik routes Swarm services on jd-mesh; a standby copies Postgres over jd-control.
+}
+
+/// `name:` in docker-compose.yml, which development runs Postgres and Traefik from.
+const DEV_COMPOSE_PROJECT: &str = "justdeploy";
+static COMPOSE_PROJECT: OnceLock<String> = OnceLock::new();
+
+/// Traefik routes Swarm services on jd-mesh; a standby copies Postgres over
+/// jd-control. Run at start and every minute, so a Traefik recreated on its own
+/// (as in development, after changing its flags) routes again.
+async fn join_compose(state: &SharedState) {
+    let Some(project) = COMPOSE_PROJECT.get() else {
+        return;
+    };
     for (service, network, slot) in [
         ("traefik", MESH, &COMPOSE_TRAEFIK),
         ("postgres", CONTROL, &COMPOSE_POSTGRES),
@@ -189,17 +215,20 @@ async fn connect(state: &SharedState, network: &str, container: &str) {
         container: container.to_string(),
         endpoint_config: Some(EndpointSettings::default()),
     };
-    if let Err(error) = state.docker.connect_network(network, request).await {
-        // Already connected is the usual answer after the first start.
-        if !error.to_string().contains("already exists") {
-            tracing::warn!(%network, %error, "could not join the network");
-        }
+    match state.docker.connect_network(network, request).await {
+        // 409: already connected, the usual answer after the first time.
+        Ok(())
+        | Err(bollard::errors::Error::DockerResponseServerError {
+            status_code: 409, ..
+        }) => {}
+        Err(error) => tracing::warn!(%network, %error, "could not join the network"),
     }
 }
 
 /// Every minute: an agent on each other server (and none for servers that
 /// left), and the registry when HTTPS is on.
 pub async fn refresh(state: SharedState) -> Result<()> {
+    join_compose(&state).await;
     let nodes = state.docker.list_nodes(None::<ListNodesOptions>).await?;
     let wanted: Vec<String> = nodes
         .iter()

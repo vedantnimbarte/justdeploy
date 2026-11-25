@@ -354,7 +354,8 @@ export function Modal({
   title: string;
   onClose: () => void;
   children: ReactNode;
-  wide?: boolean;
+  /** true: a form's width; "xl": room for a timeline or table. */
+  wide?: boolean | "xl";
 }) {
   useEffect(() => {
     if (!open) return;
@@ -374,7 +375,7 @@ export function Modal({
         aria-label={title}
         className={cx(
           "max-h-[90vh] w-full overflow-y-auto rounded-panel border border-line bg-surface p-6 shadow-[0_24px_48px_-12px_rgb(0_0_0/0.25)]",
-          wide ? "max-w-2xl" : "max-w-lg",
+          wide === "xl" ? "max-w-5xl" : wide ? "max-w-2xl" : "max-w-lg",
         )}
       >
         <div className="mb-5 flex items-start justify-between gap-4">

@@ -17,8 +17,9 @@ import ServiceSettings from "./service/ServiceSettings";
 // Charts and the terminal are the heaviest code; load them when opened.
 const Metrics = lazy(() => import("./service/Metrics"));
 const Terminal = lazy(() => import("./service/Terminal"));
+const Observability = lazy(() => import("./observability/Observability"));
 
-type Tab = "deployments" | "runs" | "logs" | "env" | "domains" | "metrics" | "terminal" | "backups" | "data" | "settings";
+type Tab = "deployments" | "runs" | "logs" | "observability" | "env" | "domains" | "metrics" | "terminal" | "backups" | "data" | "settings";
 
 export default function ServicePage() {
   const { id = "" } = useParams();
@@ -54,6 +55,7 @@ export default function ServicePage() {
     { id: "deployments", label: "Deployments" },
     ...(s.kind !== "database" ? [{ id: "runs" as Tab, label: "Runs" }] : []),
     { id: "logs", label: "Logs" },
+    { id: "observability", label: "Observability" },
     ...(can("member") ? [{ id: "env" as Tab, label: "Variables" }] : []),
     ...(s.kind !== "database" ? [{ id: "domains" as Tab, label: "Domains" }] : []),
     { id: "metrics", label: "Metrics" },
@@ -135,6 +137,7 @@ export default function ServicePage() {
         {tab === "env" && <Env service={s} />}
         {tab === "domains" && <Domains service={s} />}
         <Suspense fallback={<p>Loading…</p>}>
+          {tab === "observability" && <Observability projectId={s.project.id} serviceId={s.id} />}
           {tab === "metrics" && <Metrics service={s} />}
           {tab === "terminal" && <Terminal service={s} />}
         </Suspense>

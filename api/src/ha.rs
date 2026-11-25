@@ -325,6 +325,13 @@ fn traefik_args(tls: bool) -> Vec<String> {
         "--providers.swarm.exposedbydefault=false".to_string(),
         format!("--providers.swarm.network={MESH}"),
         "--entrypoints.web.address=:80".to_string(),
+        // Every request is traced to the control plane: that span is the request log.
+        "--tracing=true".to_string(),
+        "--tracing.sampleRate=1".to_string(),
+        format!(
+            "--tracing.otlp.http.endpoint={}/v1/traces",
+            crate::cluster::otlp_endpoint()
+        ),
     ];
     if tls {
         args.extend([
